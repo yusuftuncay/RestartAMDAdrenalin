@@ -17,6 +17,22 @@ internal static class Program
     ];
 
     private static readonly string[] AmdServiceNameMarkers = ["AMD", "Radeon"];
+    private static readonly string[] AmdProcessNameMarkers = ["AMD", "Radeon"];
+
+    private static readonly string[] AmdProcessNameWhitelist =
+    [
+        "RadeonSoftware",
+        "RadeonSettings",
+        "RadeonSettingsCore",
+        "AMDRSServ",
+        "AMDRSSrcExt",
+        "Overlay",
+        "AMDRadeonSoftware",
+        "cncmd",
+        "atieclxx",
+        "atiesrxx",
+        "amdfendrsr",
+    ];
 
     private const uint WindowMessageClose = 0x0010;
     #endregion
@@ -43,6 +59,10 @@ internal static class Program
         // Print Tool Header
         Console.WriteLine("AMD Adrenalin Reset");
         Console.WriteLine("-------------------");
+
+        // Stop AMD Processes
+        Console.WriteLine("Stopping AMD processes...");
+        StopAmdRelatedProcesses();
 
         // Stop AMD Services
         Console.WriteLine("Stopping AMD services...");
@@ -104,7 +124,100 @@ internal static class Program
         }
     }
     #endregion
+    #region Process Control
+    private static void StopAmdRelatedProcesses()
+    {
+        // Stop Whitelisted Processes
+        foreach (
+            var processName in AmdProcessNameWhitelist.Distinct(StringComparer.OrdinalIgnoreCase)
+        )
+        {
+            TryKillProcessesByName(processName);
+        }
 
+        // Stop Marker Matched Processes
+        foreach (var processInstance in SafeGetAllProcesses())
+        {
+            TryKillMarkerMatchedProcess(processInstance);
+        }
+    }
+
+    private static void TryKillProcessesByName(string processName)
+    {
+        // Kill Named Processes
+        try
+        {
+            foreach (var processInstance in Process.GetProcessesByName(processName))
+            {
+                TryKillProcess(processInstance);
+            }
+        }
+        catch
+        {
+            // Ignore Process Errors
+        }
+    }
+
+    private static Process[] SafeGetAllProcesses()
+    {
+        // Enumerate All Processes
+        try
+        {
+            return Process.GetProcesses();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void TryKillMarkerMatchedProcess(Process processInstance)
+    {
+        // Match Process Markers
+        try
+        {
+            var processName = processInstance.ProcessName;
+            if (!ContainsAnyMarker(processName, AmdProcessNameMarkers))
+                return;
+
+            if (AmdProcessNameWhitelist.Contains(processName, StringComparer.OrdinalIgnoreCase))
+                return;
+
+            TryKillProcess(processInstance);
+        }
+        catch
+        {
+            // Ignore Process Errors
+        }
+    }
+
+    private static bool ContainsAnyMarker(string value, string[] markers)
+    {
+        // Check Marker Contains
+        foreach (var marker in markers)
+        {
+            if (value.Contains(marker, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void TryKillProcess(Process processInstance)
+    {
+        // Force Kill Process
+        try
+        {
+            Console.WriteLine($"  Killing: {processInstance.ProcessName} ({processInstance.Id})");
+            processInstance.Kill(entireProcessTree: true);
+            processInstance.WaitForExit(1500);
+        }
+        catch
+        {
+            // Ignore Kill Errors
+        }
+    }
+    #endregion
     #region Service Control
     private static void StopAllAmdRelatedServices()
     {
