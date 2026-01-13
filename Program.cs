@@ -43,8 +43,8 @@ internal static class Program
         // Ensure Windows Platform
         if (!OperatingSystem.IsWindows())
         {
-            Console.WriteLine("Windows Only Tool.");
-            Console.Write("Press Any Key...");
+            Console.WriteLine("Windows Only Tool");
+            Console.Write("Press Any Key..");
             Console.ReadKey(true);
             return;
         }
@@ -61,30 +61,30 @@ internal static class Program
         Console.WriteLine("-------------------");
 
         // Stop AMD Processes
-        Console.WriteLine("Stopping AMD processes...");
+        Console.WriteLine("Stopping AMD Processes..");
         StopAmdRelatedProcesses();
 
         // Stop AMD Services
-        Console.WriteLine("Stopping AMD services...");
+        Console.WriteLine("Stopping AMD Services..");
         StopAllAmdRelatedServices();
 
         // Wait Briefly
         Thread.Sleep(800);
 
         // Start Adrenalin Normally
-        Console.WriteLine("Starting Adrenalin...");
+        Console.WriteLine("Starting Adrenalin..");
         StartAdrenalinNormal();
 
         // Close UI To Tray
-        Console.WriteLine("Sending Adrenalin to tray...");
+        Console.WriteLine("Sending Adrenalin to Tray..");
         CloseAdrenalinMainWindowToTray();
 
         // Print Done Status
-        Console.WriteLine("Done.");
+        Console.WriteLine("Done");
         Console.WriteLine();
 
         // Wait Before Exit
-        Console.Write("Press any key to close...");
+        Console.Write("Press Any Key to Close..");
         Console.ReadKey(true);
     }
     #endregion
@@ -105,7 +105,7 @@ internal static class Program
         {
             var currentProcessPath =
                 Environment.ProcessPath
-                ?? throw new InvalidOperationException("Missing process path.");
+                ?? throw new InvalidOperationException("Missing Process Path");
 
             var startInfo = new ProcessStartInfo
             {
@@ -118,8 +118,8 @@ internal static class Program
         }
         catch (Win32Exception)
         {
-            Console.WriteLine("Admin Permission Denied.");
-            Console.Write("Press Any Key...");
+            Console.WriteLine("Admin Permission Denied");
+            Console.Write("Press Any Key..");
             Console.ReadKey(true);
         }
     }
@@ -429,7 +429,7 @@ internal static class Program
         var executablePath = AdrenalinExecutablePaths.FirstOrDefault(System.IO.File.Exists);
         if (executablePath is null)
         {
-            Console.WriteLine("  Adrenalin EXE Not Found.");
+            Console.WriteLine("  Adrenalin EXE Not Found");
             return;
         }
 
@@ -446,7 +446,7 @@ internal static class Program
         }
         catch
         {
-            Console.WriteLine("  Failed To Launch Adrenalin.");
+            Console.WriteLine("  Failed To Launch Adrenalin");
         }
     }
 
@@ -466,7 +466,7 @@ internal static class Program
             Thread.Sleep(250);
         }
 
-        Console.WriteLine("  No UI Window Found.");
+        Console.WriteLine("  No UI Window Found");
     }
 
     private static Process[] GetAdrenalinCandidateProcesses()
