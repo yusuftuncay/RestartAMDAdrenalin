@@ -22,6 +22,9 @@ internal static partial class NativeMethods
     // SW_HIDE Window Show State
     internal const int SwHide = 0;
 
+    // SW_MINIMIZE Window Show State
+    internal const int SwMinimize = 6;
+
     // EnumWindows Callback Delegate
     internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

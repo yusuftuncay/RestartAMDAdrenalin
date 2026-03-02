@@ -50,31 +50,17 @@ internal static partial class Program
             StringComparer.OrdinalIgnoreCase
         );
 
-        // Print Discovered Games
-        Console.WriteLine($"Games Found: {gameProcessNames.Count}");
+        // Print Discovered Games (Deduplicated by Display Name)
+        var uniqueDisplayNames = gameProcessNameToDisplayName
+            .Values.Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        foreach (
-            var processName in gameProcessNames.OrderBy(
-                name => name,
-                StringComparer.OrdinalIgnoreCase
-            )
-        )
+        Console.WriteLine($"Games Found: {uniqueDisplayNames.Count}");
+
+        foreach (var displayName in uniqueDisplayNames)
         {
-            var displayName = gameProcessNameToDisplayName.TryGetValue(
-                processName,
-                out var nameValue
-            )
-                ? nameValue
-                : processName;
-
-            if (displayName.Equals(processName, StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine($"- {displayName}");
-            }
-            else
-            {
-                Console.WriteLine($"- {displayName} ({processName})");
-            }
+            Console.WriteLine($"  {displayName}");
         }
 
         // Exit if no Games are Found
@@ -95,6 +81,7 @@ internal static partial class Program
             cancellationTokenSource.Cancel();
         };
 
+        Console.WriteLine();
         Console.WriteLine("Watching For Games");
 
         var previouslyRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -233,19 +220,11 @@ internal static partial class Program
         if (Interlocked.Exchange(ref s_pendingResetFlag, 1) == 1)
             return;
 
+        Console.WriteLine();
         Console.WriteLine($"Game Detected: {startedDisplayName}");
-        Console.WriteLine($"Reset In {AppConfig.s_gameStartDelay.TotalSeconds:0} Seconds");
 
-        // Wait for Configured Delay
-        try
-        {
-            await Task.Delay(AppConfig.s_gameStartDelay, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            Interlocked.Exchange(ref s_pendingResetFlag, 0);
-            return;
-        }
+        // Wait for Configured Delay (Not Cancellable — Reset Runs to Completion Once Triggered)
+        await Task.Delay(AppConfig.s_gameStartDelay).ConfigureAwait(false);
 
         // Abort if Game Closed During Delay
         if (!IsAnyTrackedGameRunning(gameProcessNames))

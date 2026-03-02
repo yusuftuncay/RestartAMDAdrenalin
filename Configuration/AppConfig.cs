@@ -26,6 +26,16 @@ internal static class AppConfig
         "amdfendrsr",
     ];
 
+    // AMD Service Names to Stop
+    internal static readonly string[] s_amdServiceNameAllowlist =
+    [
+        "AMDRSServ",
+        "AMDRSSrcExt",
+        "atieclxx",
+        "atiesrxx",
+        "amdfendrsr",
+    ];
+
     // Path Substrings Identifying AMD Executables
     internal static readonly string[] s_amdExecutablePathMarkers =
     [

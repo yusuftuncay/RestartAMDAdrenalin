@@ -13,13 +13,21 @@ internal static class AmdReset
 {
     internal static void ExecuteReset()
     {
+        Console.WriteLine("[1/3] Stopping AMD Services..");
+        StopAmdServices();
+
+        Console.WriteLine();
+        Console.WriteLine("[2/3] Stopping AMD Processes..");
         StopAmdProcesses();
-        StopAmdServicesByBinaryPath();
 
         Thread.Sleep(800);
 
-        StartAdrenalin();
-        CloseAdrenalinWindow();
+        Console.WriteLine();
+        Console.WriteLine("[3/3] Starting Adrenalin..");
+        if (StartAdrenalin())
+        {
+            MinimizeAdrenalinWindow();
+        }
     }
 
     internal static bool TryRelaunchElevated()
@@ -76,6 +84,44 @@ internal static class AmdReset
         {
             TryKillIfAmdBinary(processInstance);
         }
+
+        // Verify All AMD Processes Have Exited Before Proceeding
+        WaitForAmdProcessesToExit();
+    }
+
+    private static void WaitForAmdProcessesToExit()
+    {
+        // Poll Until All Known AMD Processes Have Exited or Timeout
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            var anyRunning = false;
+            foreach (var name in AppConfig.s_amdProcessNameAllowlist)
+            {
+                try
+                {
+                    var instances = Process.GetProcessesByName(name);
+                    foreach (var p in instances)
+                        try
+                        {
+                            p.Dispose();
+                        }
+                        catch { }
+
+                    if (instances.Length > 0)
+                    {
+                        anyRunning = true;
+                        break;
+                    }
+                }
+                catch { }
+            }
+
+            if (!anyRunning)
+                return;
+
+            Thread.Sleep(200);
+        }
     }
 
     private static void TryKillByName(string processName)
@@ -85,6 +131,9 @@ internal static class AmdReset
             // Kill All Instances of the Process by Name
             foreach (var processInstance in Process.GetProcessesByName(processName))
             {
+                Console.WriteLine(
+                    $"  Killing Process: {processInstance.ProcessName} (PID {processInstance.Id})"
+                );
                 ProcessTools.TryKill(processInstance, waitMs: 1500);
             }
         }
@@ -120,6 +169,7 @@ internal static class AmdReset
                 return;
 
             // Kill the AMD-Backed Process
+            Console.WriteLine($"  Killing AMD Process: {processName} (PID {processInstance.Id})");
             ProcessTools.TryKill(processInstance, waitMs: 1500);
         }
         catch
@@ -132,110 +182,17 @@ internal static class AmdReset
         }
     }
 
-    private static void StopAmdServicesByBinaryPath()
+    private static void StopAmdServices()
     {
-        // Query All Running Services
-        var serviceEntries = QueryAllServiceEntries();
-        // Stop Services Backed by AMD Binaries
-        foreach (var (serviceName, displayName) in serviceEntries)
+        // Stop Known AMD Services by Name
+        foreach (
+            var serviceName in AppConfig.s_amdServiceNameAllowlist.Distinct(
+                StringComparer.OrdinalIgnoreCase
+            )
+        )
         {
-            if (!IsServiceBackedByAmdBinary(serviceName))
-                continue;
-
-            Console.WriteLine($"Stopping Service: {displayName}");
             TryStopService(serviceName);
         }
-    }
-
-    private static bool IsServiceBackedByAmdBinary(string serviceName)
-    {
-        // Query Service Configuration via sc.exe
-        var outputText = CommandRunner.CaptureOutput(
-            "sc.exe",
-            $"qc \"{serviceName}\"",
-            timeoutMs: 8000
-        );
-        if (string.IsNullOrWhiteSpace(outputText))
-            return false;
-
-        // Parse and Validate the Binary Path
-        var binaryPathName = TryParseBinaryPathName(outputText);
-        if (string.IsNullOrWhiteSpace(binaryPathName))
-            return false;
-
-        // Check if Binary Path Matches AMD Markers
-        return TextMatchers.ContainsAnyMarker(binaryPathName, AppConfig.s_amdExecutablePathMarkers);
-    }
-
-    private static string? TryParseBinaryPathName(string scQcOutput)
-    {
-        // Scan Lines for BINARY_PATH_NAME
-        var lines = scQcOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        foreach (var rawLine in lines)
-        {
-            var line = rawLine.Trim();
-            if (!line.StartsWith("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            // Extract the Value After the Colon
-            var colonIndex = line.IndexOf(':');
-            if (colonIndex < 0)
-                continue;
-
-            var value = line[(colonIndex + 1)..].Trim();
-            if (string.IsNullOrWhiteSpace(value))
-                continue;
-
-            return value.Trim('"');
-        }
-
-        return null;
-    }
-
-    private static List<(string ServiceName, string DisplayName)> QueryAllServiceEntries()
-    {
-        // Run sc.exe to List All Services
-        var outputText = CommandRunner.CaptureOutput("sc.exe", "query state= all", timeoutMs: 8000);
-        if (string.IsNullOrWhiteSpace(outputText))
-            return [];
-
-        // Parse SERVICE_NAME and DISPLAY_NAME Entries
-        var lines = outputText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        var results = new List<(string ServiceName, string DisplayName)>();
-
-        var currentServiceName = string.Empty;
-        var currentDisplayName = string.Empty;
-
-        foreach (var rawLine in lines)
-        {
-            var line = rawLine.Trim();
-
-            if (line.StartsWith("SERVICE_NAME:", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrWhiteSpace(currentServiceName))
-                {
-                    results.Add((currentServiceName, currentDisplayName));
-                }
-
-                currentServiceName = line["SERVICE_NAME:".Length..].Trim();
-                currentDisplayName = string.Empty;
-                continue;
-            }
-
-            if (line.StartsWith("DISPLAY_NAME:", StringComparison.OrdinalIgnoreCase))
-            {
-                currentDisplayName = line["DISPLAY_NAME:".Length..].Trim();
-                continue;
-            }
-        }
-
-        // Add the Last Collected Entry
-        if (!string.IsNullOrWhiteSpace(currentServiceName))
-        {
-            results.Add((currentServiceName, currentDisplayName));
-        }
-
-        return results;
     }
 
     private static void TryStopService(string serviceName)
@@ -246,11 +203,12 @@ internal static class AmdReset
             $"stop \"{serviceName}\"",
             timeoutMs: 8000
         );
-        // Wait for Service to Reach Stopped State
-        if (exitCode == 0)
-        {
-            WaitForServiceStopped(serviceName, timeout: TimeSpan.FromSeconds(6));
-        }
+        if (exitCode != 0)
+            return;
+
+        // Log and Wait for Service to Reach Stopped State
+        Console.WriteLine($"  Stopping Service: {serviceName}");
+        WaitForServiceStopped(serviceName, timeout: TimeSpan.FromSeconds(6));
     }
 
     private static void WaitForServiceStopped(string serviceName, TimeSpan timeout)
@@ -261,7 +219,10 @@ internal static class AmdReset
         {
             var state = QueryServiceState(serviceName);
             if (string.Equals(state, "STOPPED", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"  Service Stopped: {serviceName}");
                 return;
+            }
 
             Thread.Sleep(250);
         }
@@ -295,14 +256,14 @@ internal static class AmdReset
         return null;
     }
 
-    private static void StartAdrenalin()
+    private static bool StartAdrenalin()
     {
         // Find the First Valid Adrenalin Executable
         var executablePath = AppConfig.s_adrenalinExecutablePaths.FirstOrDefault(File.Exists);
         if (executablePath is null)
         {
-            Console.WriteLine("Adrenalin Not Found");
-            return;
+            Console.WriteLine("  Adrenalin Not Found");
+            return false;
         }
 
         try
@@ -315,50 +276,59 @@ internal static class AmdReset
             };
 
             Process.Start(startInfo);
-            Console.WriteLine("Adrenalin Started");
         }
-        catch { }
-    }
-
-    private static void CloseAdrenalinWindow()
-    {
-        const int maxAttempts = 3;
-
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        catch
         {
-            // Poll Until Window is Found and Closed or Timeout
-            var deadlineUtc = DateTime.UtcNow.AddSeconds(20);
-            var closed = false;
+            Console.WriteLine("  Adrenalin Start Failed");
+            return false;
+        }
 
-            while (DateTime.UtcNow < deadlineUtc)
+        // Wait for Adrenalin Process to Appear
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            var candidates = GetAdrenalinCandidateProcesses();
+            if (candidates.Length > 0)
             {
-                var candidateProcesses = GetAdrenalinCandidateProcesses();
-                foreach (var processInstance in candidateProcesses)
-                {
-                    if (TryCloseMainWindow(processInstance))
+                foreach (var candidate in candidates)
+                    try
                     {
-                        closed = true;
-                        break;
+                        candidate.Dispose();
                     }
-                }
+                    catch { }
 
-                if (closed)
-                    break;
-
-                Thread.Sleep(250);
+                Console.WriteLine("  Adrenalin Started");
+                return true;
             }
 
-            if (closed)
+            Thread.Sleep(250);
+        }
+
+        Console.WriteLine("  Adrenalin Start Timed Out");
+        return false;
+    }
+
+    private static void MinimizeAdrenalinWindow()
+    {
+        // Poll Until Adrenalin Window Can be Minimized or Timeout
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            var minimized = false;
+            foreach (var processInstance in GetAdrenalinCandidateProcesses())
             {
-                Console.WriteLine("Adrenalin Closed");
+                // TryMinimizeProcess Always Disposes the Process Handle
+                if (TryMinimizeProcess(processInstance))
+                    minimized = true;
+            }
+
+            if (minimized)
+            {
+                Console.WriteLine("  Adrenalin Minimized");
                 return;
             }
 
-            // Short pause before next attempt
-            if (attempt < maxAttempts - 1)
-            {
-                Thread.Sleep(1000);
-            }
+            Thread.Sleep(250);
         }
     }
 
@@ -387,25 +357,24 @@ internal static class AmdReset
         }
     }
 
-    private static bool TryCloseMainWindow(Process processInstance)
+    private static bool TryMinimizeProcess(Process processInstance)
     {
         try
         {
-            // Refresh and Validate the Main Window Handle
             processInstance.Refresh();
 
-            var mainWindowHandle = processInstance.MainWindowHandle;
-            if (mainWindowHandle == IntPtr.Zero)
+            // Try the Main Window Handle First
+            var windowHandle = processInstance.MainWindowHandle;
+
+            // Fall Back to Enumerating All Windows for This Process
+            if (windowHandle == IntPtr.Zero)
+                windowHandle = FindVisibleProcessWindow(processInstance.Id);
+
+            if (windowHandle == IntPtr.Zero)
                 return false;
 
-            // Send a Close Message to the Window
-            _ = NativeMethods.PostMessage(
-                mainWindowHandle,
-                NativeMethods.WindowMessageClose,
-                IntPtr.Zero,
-                IntPtr.Zero
-            );
-
+            // Send Minimize Command to the Window
+            _ = NativeMethods.ShowWindow(windowHandle, NativeMethods.SwMinimize);
             return true;
         }
         catch
@@ -421,5 +390,26 @@ internal static class AmdReset
             }
             catch { }
         }
+    }
+
+    private static IntPtr FindVisibleProcessWindow(int processId)
+    {
+        var result = IntPtr.Zero;
+
+        // Enumerate All Top Level Windows to Find a Visible One for This Process
+        NativeMethods.EnumWindows(
+            (hWnd, _) =>
+            {
+                NativeMethods.GetWindowThreadProcessId(hWnd, out var pid);
+                if (pid != (uint)processId || !NativeMethods.IsWindowVisible(hWnd))
+                    return true;
+
+                result = hWnd;
+                return false; // Stop Enumeration
+            },
+            IntPtr.Zero
+        );
+
+        return result;
     }
 }
