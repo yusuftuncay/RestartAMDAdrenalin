@@ -8,9 +8,7 @@ internal static class TextMatchers
         foreach (var token in tokens)
         {
             if (value.Contains(token, StringComparison.OrdinalIgnoreCase))
-            {
                 return true;
-            }
         }
 
         return false;
@@ -22,9 +20,7 @@ internal static class TextMatchers
         foreach (var marker in markers)
         {
             if (value.Contains(marker, StringComparison.OrdinalIgnoreCase))
-            {
                 return true;
-            }
         }
 
         return false;

@@ -103,16 +103,12 @@ internal static class AmdReset
                     StringComparer.OrdinalIgnoreCase
                 )
             )
-            {
                 return;
-            }
 
             // Resolve and Validate the Executable Path
             var executablePath = ProcessTools.TryGetExecutablePath(processInstance);
             if (string.IsNullOrWhiteSpace(executablePath))
-            {
                 return;
-            }
 
             // Skip if Path Does not Match AMD Markers
             if (
@@ -121,9 +117,7 @@ internal static class AmdReset
                     AppConfig.s_amdExecutablePathMarkers
                 )
             )
-            {
                 return;
-            }
 
             // Kill the AMD-Backed Process
             ProcessTools.TryKill(processInstance, waitMs: 1500);
@@ -146,9 +140,7 @@ internal static class AmdReset
         foreach (var (serviceName, displayName) in serviceEntries)
         {
             if (!IsServiceBackedByAmdBinary(serviceName))
-            {
                 continue;
-            }
 
             Console.WriteLine($"Stopping Service: {displayName}");
             TryStopService(serviceName);
@@ -164,16 +156,12 @@ internal static class AmdReset
             timeoutMs: 8000
         );
         if (string.IsNullOrWhiteSpace(outputText))
-        {
             return false;
-        }
 
         // Parse and Validate the Binary Path
         var binaryPathName = TryParseBinaryPathName(outputText);
         if (string.IsNullOrWhiteSpace(binaryPathName))
-        {
             return false;
-        }
 
         // Check if Binary Path Matches AMD Markers
         return TextMatchers.ContainsAnyMarker(binaryPathName, AppConfig.s_amdExecutablePathMarkers);
@@ -187,22 +175,16 @@ internal static class AmdReset
         {
             var line = rawLine.Trim();
             if (!line.StartsWith("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase))
-            {
                 continue;
-            }
 
             // Extract the Value After the Colon
             var colonIndex = line.IndexOf(':');
             if (colonIndex < 0)
-            {
                 continue;
-            }
 
             var value = line[(colonIndex + 1)..].Trim();
             if (string.IsNullOrWhiteSpace(value))
-            {
                 continue;
-            }
 
             return value.Trim('"');
         }
@@ -215,9 +197,7 @@ internal static class AmdReset
         // Run sc.exe to List All Services
         var outputText = CommandRunner.CaptureOutput("sc.exe", "query state= all", timeoutMs: 8000);
         if (string.IsNullOrWhiteSpace(outputText))
-        {
             return [];
-        }
 
         // Parse SERVICE_NAME and DISPLAY_NAME Entries
         var lines = outputText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
@@ -281,9 +261,7 @@ internal static class AmdReset
         {
             var state = QueryServiceState(serviceName);
             if (string.Equals(state, "STOPPED", StringComparison.OrdinalIgnoreCase))
-            {
                 return;
-            }
 
             Thread.Sleep(250);
         }
@@ -298,29 +276,21 @@ internal static class AmdReset
             timeoutMs: 8000
         );
         if (string.IsNullOrWhiteSpace(outputText))
-        {
             return null;
-        }
 
         // Locate the STATE Block in the Output
         var stateIndex = outputText.IndexOf("STATE", StringComparison.OrdinalIgnoreCase);
         if (stateIndex < 0)
-        {
             return null;
-        }
 
         var stateBlock = outputText[stateIndex..];
 
         // Determine if the Service is Running or Stopped
         if (stateBlock.Contains("RUNNING", StringComparison.OrdinalIgnoreCase))
-        {
             return "RUNNING";
-        }
 
         if (stateBlock.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
-        {
             return "STOPPED";
-        }
 
         return null;
     }
@@ -352,21 +322,43 @@ internal static class AmdReset
 
     private static void CloseAdrenalinWindow()
     {
-        // Poll Until Window is Found and Closed or Timeout
-        var deadlineUtc = DateTime.UtcNow.AddSeconds(20);
-        while (DateTime.UtcNow < deadlineUtc)
+        const int maxAttempts = 3;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
-            var candidateProcesses = GetAdrenalinCandidateProcesses();
-            foreach (var processInstance in candidateProcesses)
+            // Poll Until Window is Found and Closed or Timeout
+            var deadlineUtc = DateTime.UtcNow.AddSeconds(20);
+            var closed = false;
+
+            while (DateTime.UtcNow < deadlineUtc)
             {
-                if (TryCloseMainWindow(processInstance))
+                var candidateProcesses = GetAdrenalinCandidateProcesses();
+                foreach (var processInstance in candidateProcesses)
                 {
-                    Console.WriteLine("Adrenalin Closed");
-                    return;
+                    if (TryCloseMainWindow(processInstance))
+                    {
+                        closed = true;
+                        break;
+                    }
                 }
+
+                if (closed)
+                    break;
+
+                Thread.Sleep(250);
             }
 
-            Thread.Sleep(250);
+            if (closed)
+            {
+                Console.WriteLine("Adrenalin Closed");
+                return;
+            }
+
+            // Short pause before next attempt
+            if (attempt < maxAttempts - 1)
+            {
+                Thread.Sleep(1000);
+            }
         }
     }
 
@@ -404,9 +396,7 @@ internal static class AmdReset
 
             var mainWindowHandle = processInstance.MainWindowHandle;
             if (mainWindowHandle == IntPtr.Zero)
-            {
                 return false;
-            }
 
             // Send a Close Message to the Window
             _ = NativeMethods.PostMessage(
@@ -415,6 +405,7 @@ internal static class AmdReset
                 IntPtr.Zero,
                 IntPtr.Zero
             );
+
             return true;
         }
         catch

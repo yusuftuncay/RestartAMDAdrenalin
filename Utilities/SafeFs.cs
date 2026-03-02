@@ -46,9 +46,7 @@ internal static class SafeFs
 
             // Skip Directories With Blocked Path Tokens
             if (TextMatchers.ContainsAnyToken(currentDirectory, blockedPathTokens))
-            {
                 continue;
-            }
 
             IEnumerable<string> filePaths;
             try

@@ -159,22 +159,22 @@ internal static partial class GameScanner
         cleaned = cleaned.Replace('_', ' ');
         cleaned = cleaned.Replace('-', ' ');
 
-        cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim();
+        cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
 
         // Strip Platform and Build Tags
-        cleaned = Regex.Replace(cleaned, "\\bWin64\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bWin32\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bx64\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bx86\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bShipping\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bRelease\\b", "", RegexOptions.IgnoreCase).Trim();
-        cleaned = Regex.Replace(cleaned, "\\bLauncher\\b", "", RegexOptions.IgnoreCase).Trim();
+        cleaned = Win64Regex().Replace(cleaned, "").Trim();
+        cleaned = Win32Regex().Replace(cleaned, "").Trim();
+        cleaned = X64Regex().Replace(cleaned, "").Trim();
+        cleaned = X86Regex().Replace(cleaned, "").Trim();
+        cleaned = ShippingRegex().Replace(cleaned, "").Trim();
+        cleaned = ReleaseRegex().Replace(cleaned, "").Trim();
+        cleaned = LauncherRegex().Replace(cleaned, "").Trim();
 
-        cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim();
+        cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
 
         // Insert Boundaries and Apply Title Case
         cleaned = InsertSpacesBetweenWords(cleaned);
-        cleaned = Regex.Replace(cleaned, "\\s+", " ").Trim();
+        cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
 
         return ToTitleCaseInvariant(cleaned);
     }
@@ -243,41 +243,29 @@ internal static partial class GameScanner
     {
         // Validate Path and File Existence
         if (string.IsNullOrWhiteSpace(executablePath))
-        {
             return false;
-        }
 
         if (!File.Exists(executablePath))
-        {
             return false;
-        }
 
         var executableName = Path.GetFileNameWithoutExtension(executablePath);
         if (string.IsNullOrWhiteSpace(executableName))
-        {
             return false;
-        }
 
-        // Apply Name-Based and Path-Based Filters
+        // Apply Name Based and Path Based Filters
         if (AppConfig.s_exeNameBlocklist.Contains(executableName, StringComparer.OrdinalIgnoreCase))
-        {
             return false;
-        }
 
         foreach (var token in AppConfig.s_exeNameTokenBlocklist)
         {
             if (executableName.Contains(token, StringComparison.OrdinalIgnoreCase))
-            {
                 return false;
-            }
         }
 
         foreach (var token in AppConfig.s_pathTokenBlocklist)
         {
             if (executablePath.Contains(token, StringComparison.OrdinalIgnoreCase))
-            {
                 return false;
-            }
         }
 
         // Enforce Minimum File Size
@@ -285,9 +273,7 @@ internal static partial class GameScanner
         {
             var fileInfo = new FileInfo(executablePath);
             if (fileInfo.Length < AppConfig.MinGameExeBytes)
-            {
                 return false;
-            }
         }
         catch
         {
@@ -302,25 +288,19 @@ internal static partial class GameScanner
         // Find Steam Installation
         var steamRoot = FindSteamInstallPath();
         if (steamRoot is null)
-        {
             yield break;
-        }
 
         // Locate Library Folders VDF Config
         var libraryFoldersPath = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
         if (!File.Exists(libraryFoldersPath))
-        {
             yield break;
-        }
 
         // Enumerate Library Folders and Yield Game Roots
         foreach (var libraryRoot in ParseSteamLibraryFolders(libraryFoldersPath))
         {
             var steamAppsDirectory = Path.Combine(libraryRoot, "steamapps");
             if (!Directory.Exists(steamAppsDirectory))
-            {
                 continue;
-            }
 
             foreach (
                 var manifestPath in SafeFs.EnumerateFiles(steamAppsDirectory, "appmanifest_*.acf")
@@ -328,9 +308,7 @@ internal static partial class GameScanner
             {
                 var installDirectoryName = TryParseSteamAppManifestInstallDir(manifestPath);
                 if (installDirectoryName is null)
-                {
                     continue;
-                }
 
                 var gameRoot = Path.Combine(steamAppsDirectory, "common", installDirectoryName);
                 if (Directory.Exists(gameRoot))
@@ -396,18 +374,14 @@ internal static partial class GameScanner
         // Locate Epic Manifests Directory
         var manifestsDirectory = @"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests";
         if (!Directory.Exists(manifestsDirectory))
-        {
             yield break;
-        }
 
         // Parse Each .item Manifest for Install Location
         foreach (var itemFilePath in SafeFs.EnumerateFiles(manifestsDirectory, "*.item"))
         {
             var installRoot = TryParseEpicInstallLocation(itemFilePath);
             if (installRoot is null)
-            {
                 continue;
-            }
 
             if (Directory.Exists(installRoot))
             {
@@ -423,14 +397,10 @@ internal static partial class GameScanner
             // Parse the .item JSON File and Extract InstallLocation
             using var jsonDocument = JsonDocument.Parse(File.ReadAllText(itemFilePath));
             if (!jsonDocument.RootElement.TryGetProperty("InstallLocation", out var propertyValue))
-            {
                 return null;
-            }
 
             if (propertyValue.ValueKind != JsonValueKind.String)
-            {
                 return null;
-            }
 
             return propertyValue.GetString();
         }
@@ -464,15 +434,11 @@ internal static partial class GameScanner
             foreach (var property in jsonDocument.RootElement.EnumerateObject())
             {
                 if (property.Value.ValueKind != JsonValueKind.String)
-                {
                     continue;
-                }
 
                 var executablePath = property.Value.GetString();
                 if (string.IsNullOrWhiteSpace(executablePath))
-                {
                     continue;
-                }
 
                 var directoryPath = Path.GetDirectoryName(executablePath);
                 if (!string.IsNullOrWhiteSpace(directoryPath) && Directory.Exists(directoryPath))
@@ -502,9 +468,7 @@ internal static partial class GameScanner
         foreach (var baseDirectory in candidateDirectories)
         {
             if (!Directory.Exists(baseDirectory))
-            {
                 continue;
-            }
 
             // Yield Each Game Subdirectory
             foreach (var childDirectory in SafeFs.EnumerateDirectories(baseDirectory))
@@ -514,9 +478,35 @@ internal static partial class GameScanner
         }
     }
 
+    #region Regexes
     [GeneratedRegex("\"installdir\"\\s*\"(?<d>[^\"]+)\"", RegexOptions.IgnoreCase, "en-US")]
     private static partial Regex InstalledDirectoryRegex();
 
     [GeneratedRegex("\"path\"\\s*\"(?<p>[^\"]+)\"", RegexOptions.IgnoreCase, "en-US")]
     private static partial Regex InstalledPathRegex();
+
+    [GeneratedRegex("\\s+")]
+    private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex("\\bWin64\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex Win64Regex();
+
+    [GeneratedRegex("\\bWin32\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex Win32Regex();
+
+    [GeneratedRegex("\\bx64\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex X64Regex();
+
+    [GeneratedRegex("\\bx86\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex X86Regex();
+
+    [GeneratedRegex("\\bShipping\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex ShippingRegex();
+
+    [GeneratedRegex("\\bRelease\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex ReleaseRegex();
+
+    [GeneratedRegex("\\bLauncher\\b", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex LauncherRegex();
+    #endregion
 }

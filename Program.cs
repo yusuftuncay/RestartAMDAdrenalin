@@ -6,7 +6,7 @@ using RestartAMDAdrenalin.Game;
 namespace RestartAMDAdrenalin;
 
 [SupportedOSPlatform("windows")]
-internal static class Program
+internal static partial class Program
 {
     // Reset State Tracking
     private static long s_lastResetUtcTicks;
@@ -26,12 +26,17 @@ internal static class Program
         // Require Admin Rights at Startup
         if (!AmdReset.IsAdministrator())
         {
-            if (!AmdReset.TryRelaunchElevated())
+            if (AmdReset.TryRelaunchElevated())
+            {
+                Environment.Exit(0);
+            }
+            else
             {
                 Console.WriteLine("Admin Rights Required");
                 Console.WriteLine("Press Any Key");
                 Console.ReadKey(true);
             }
+
             return;
         }
 
@@ -105,9 +110,7 @@ internal static class Program
             foreach (var runningProcessName in currentlyRunning)
             {
                 if (previouslyRunning.Contains(runningProcessName))
-                {
                     continue;
-                }
 
                 newGameStarted = true;
                 startedProcessName = runningProcessName;
@@ -193,9 +196,7 @@ internal static class Program
                 {
                     var processName = processInstance.ProcessName;
                     if (gameProcessNames.Contains(processName))
-                    {
                         return true;
-                    }
                 }
                 catch { }
                 finally
@@ -226,15 +227,11 @@ internal static class Program
             lastTicks == 0 ? DateTime.MinValue : new DateTime(lastTicks, DateTimeKind.Utc);
 
         if (nowUtc - lastUtc < AppConfig.s_resetDebounce)
-        {
             return;
-        }
 
         // Skip if a Reset is Already Pending
         if (Interlocked.Exchange(ref s_pendingResetFlag, 1) == 1)
-        {
             return;
-        }
 
         Console.WriteLine($"Game Detected: {startedDisplayName}");
         Console.WriteLine($"Reset In {AppConfig.s_gameStartDelay.TotalSeconds:0} Seconds");

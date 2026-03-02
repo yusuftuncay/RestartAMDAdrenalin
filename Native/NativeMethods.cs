@@ -25,26 +25,26 @@ internal static partial class NativeMethods
     // EnumWindows Callback Delegate
     internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    // P/Invoke: Enumerate All Top-Level Windows
-    [DllImport("user32.dll", SetLastError = true)]
+    // P/Invoke: Enumerate All Top Level Windows
+    [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    internal static partial bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
     // P/Invoke: Get the Process ID Owning a Window
-    [DllImport("user32.dll", SetLastError = true)]
-    internal static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [LibraryImport("user32.dll", SetLastError = true)]
+    internal static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     // P/Invoke: Check if a Window is Visible
-    [DllImport("user32.dll")]
+    [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool IsWindowVisible(IntPtr hWnd);
+    internal static partial bool IsWindowVisible(IntPtr hWnd);
 
     // P/Invoke: Get the Console Window Handle
-    [DllImport("kernel32.dll")]
-    internal static extern IntPtr GetConsoleWindow();
+    [LibraryImport("kernel32.dll")]
+    internal static partial IntPtr GetConsoleWindow();
 
     // P/Invoke: Show or Hide a Window
-    [DllImport("user32.dll")]
+    [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    internal static partial bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }

@@ -2,6 +2,7 @@
 
 internal static class AppConfig
 {
+    #region Adrenalin
     // Paths to the Adrenalin Executable
     internal static readonly string[] s_adrenalinExecutablePaths =
     [
@@ -32,9 +33,9 @@ internal static class AppConfig
         @"\Advanced Micro Devices\",
         @"\CNext\",
     ];
+    #endregion
 
-    // Detect
-
+    #region Detect
     // Process Scan Frequency
     internal static readonly TimeSpan s_pollInterval = TimeSpan.FromSeconds(2);
 
@@ -43,9 +44,9 @@ internal static class AppConfig
 
     // Minimum Time Between Resets
     internal static readonly TimeSpan s_resetDebounce = TimeSpan.FromMinutes(5);
+    #endregion
 
-    // Game Filter
-
+    #region Game Filter
     // Minimum File Size to Qualify as a Game Executable
     internal const long MinGameExeBytes = 15L * 1024L * 1024L;
 
@@ -124,4 +125,5 @@ internal static class AppConfig
         "crashreporter",
         "launcher",
     ];
+    #endregion
 }
