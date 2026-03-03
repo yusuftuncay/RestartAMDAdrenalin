@@ -11,4 +11,4 @@ Automatically resets AMD Adrenalin when a game is launched. Kills all AMD proces
 
 # Demo
 
-<img width="1103" height="639" alt="image" src="https://github.com/user-attachments/assets/54f831d0-5ef3-4d69-a713-843c01de10fb" />
+<img width="1103" height="658" alt="image" src="https://github.com/user-attachments/assets/357eed96-bf9e-4d63-a449-16f21d287fce" />
