@@ -52,8 +52,6 @@ internal static class AppConfig
     // Delay Before Resetting After Game Start
     internal static readonly TimeSpan s_gameStartDelay = TimeSpan.FromSeconds(2);
 
-    // Minimum Time Between Resets
-    internal static readonly TimeSpan s_resetDebounce = TimeSpan.FromMinutes(5);
     #endregion
 
     #region Game Filter

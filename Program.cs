@@ -2,6 +2,7 @@
 using RestartAMDAdrenalin.Amd;
 using RestartAMDAdrenalin.Configuration;
 using RestartAMDAdrenalin.Game;
+using static RestartAMDAdrenalin.Utilities.Logger;
 
 namespace RestartAMDAdrenalin;
 
@@ -9,7 +10,6 @@ namespace RestartAMDAdrenalin;
 internal static partial class Program
 {
     // Reset State Tracking
-    private static long s_lastResetUtcTicks;
     private static int s_pendingResetFlag;
 
     private static async Task Main()
@@ -40,8 +40,7 @@ internal static partial class Program
             return;
         }
 
-        Console.WriteLine("AMD Adrenalin Auto Reset");
-        Console.WriteLine("------------------------");
+        LogHeader("AMD Adrenalin Auto Reset");
 
         // Scan Installed Games
         var gameProcessNameToDisplayName = GameScanner.ScanInstalledGameProcessNames();
@@ -56,17 +55,12 @@ internal static partial class Program
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Console.WriteLine($"Games Found: {uniqueDisplayNames.Count}");
-
-        foreach (var displayName in uniqueDisplayNames)
-        {
-            Console.WriteLine($"  {displayName}");
-        }
+        LogList($"Games Found: {uniqueDisplayNames.Count}", uniqueDisplayNames);
 
         // Exit if no Games are Found
         if (gameProcessNames.Count == 0)
         {
-            Console.WriteLine("No Games Found");
+            Log("No Games Found", ConsoleColor.Red);
             Console.WriteLine("Press Any Key");
             Console.ReadKey(true);
             return;
@@ -81,8 +75,7 @@ internal static partial class Program
             cancellationTokenSource.Cancel();
         };
 
-        Console.WriteLine();
-        Console.WriteLine("Watching For Games");
+        Log("Watching for Games", ConsoleColor.Cyan);
 
         var previouslyRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -138,7 +131,7 @@ internal static partial class Program
             }
         }
 
-        Console.WriteLine("Shutdown Requested");
+        Log("Shutdown Requested", ConsoleColor.DarkGray);
     }
 
     private static HashSet<string> GetRunningGameProcesses(HashSet<string> gameProcessNames)
@@ -207,37 +200,33 @@ internal static partial class Program
         CancellationToken cancellationToken
     )
     {
-        // Skip if Within Debounce Window
-        var nowUtc = DateTime.UtcNow;
-        var lastTicks = Interlocked.Read(ref s_lastResetUtcTicks);
-        var lastUtc =
-            lastTicks == 0 ? DateTime.MinValue : new DateTime(lastTicks, DateTimeKind.Utc);
-
-        if (nowUtc - lastUtc < AppConfig.s_resetDebounce)
-            return;
-
         // Skip if a Reset is Already Pending
         if (Interlocked.Exchange(ref s_pendingResetFlag, 1) == 1)
             return;
 
-        Console.WriteLine();
-        Console.WriteLine($"Game Detected: {startedDisplayName}");
-
-        // Wait for Configured Delay (Not Cancellable — Reset Runs to Completion Once Triggered)
-        await Task.Delay(AppConfig.s_gameStartDelay).ConfigureAwait(false);
-
-        // Abort if Game Closed During Delay
-        if (!IsAnyTrackedGameRunning(gameProcessNames))
+        try
         {
-            Console.WriteLine("Game Closed");
-            Interlocked.Exchange(ref s_pendingResetFlag, 0);
-            return;
-        }
+            Log($"Game Detected: {startedDisplayName}", ConsoleColor.Yellow);
 
-        // Execute Reset and Record Timestamp
-        AmdReset.ExecuteReset();
-        Interlocked.Exchange(ref s_lastResetUtcTicks, DateTime.UtcNow.Ticks);
-        Console.WriteLine("Reset Done");
-        Interlocked.Exchange(ref s_pendingResetFlag, 0);
+            // Wait for Configured Delay (Not Cancellable — Reset Runs to Completion Once Triggered)
+            await Task.Delay(AppConfig.s_gameStartDelay, cancellationToken).ConfigureAwait(false);
+
+            // Abort if Game Closed During Delay
+            if (!IsAnyTrackedGameRunning(gameProcessNames))
+            {
+                Log("Game Closed Before Reset", ConsoleColor.DarkYellow);
+                Log("Watching for Games", ConsoleColor.Cyan);
+                return;
+            }
+
+            // Execute Reset
+            AmdReset.ExecuteReset();
+            Log("Reset Done", ConsoleColor.Green);
+            Log("Watching for Games", ConsoleColor.Cyan);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref s_pendingResetFlag, 0);
+        }
     }
 }
