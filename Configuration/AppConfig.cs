@@ -21,9 +21,12 @@ internal static class AppConfig
         "Overlay",
         "AMDRadeonSoftware",
         "cncmd",
+        "CPUMetricsServer",
         "atieclxx",
         "atiesrxx",
         "amdfendrsr",
+        "amdow",
+        "AmdPpkgSvc",
     ];
 
     // AMD Service Names to Stop
@@ -33,7 +36,11 @@ internal static class AppConfig
         "AMDRSSrcExt",
         "atieclxx",
         "atiesrxx",
+        "AMD External Events Utility",
         "amdfendrsr",
+        "AMD Crash Defender Service",
+        "AmdPpkgSvc",
+        "amd3dvcacheSvc",
     ];
 
     // Path Substrings Identifying AMD Executables
@@ -132,6 +139,7 @@ internal static class AppConfig
         "crashreport",
         "crashreporter",
         "launcher",
+        "riot client",
     ];
     #endregion
 }

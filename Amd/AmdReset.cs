@@ -14,19 +14,19 @@ internal static class AmdReset
 {
     internal static void ExecuteReset()
     {
-        Log("Stopping AMD Services", ConsoleColor.White);
+        Log("Stopping AMD Services", ConsoleColor.DarkYellow);
         StopAmdServices();
 
-        Log("Stopping AMD Processes", ConsoleColor.White);
+        Log("Stopping AMD Processes", ConsoleColor.DarkYellow);
         StopAmdProcesses();
 
-        Thread.Sleep(800);
+        Thread.Sleep(1500);
 
-        Log("Starting Adrenalin", ConsoleColor.White);
-        if (StartAdrenalin())
-        {
-            CloseAdrenalinWindow();
-        }
+        Log("Starting Adrenalin", ConsoleColor.DarkGreen);
+        StartAdrenalin();
+
+        Log("Starting AMD Services", ConsoleColor.DarkGreen);
+        StartAmdServices();
     }
 
     internal static bool TryRelaunchElevated()
@@ -91,7 +91,8 @@ internal static class AmdReset
     private static void WaitForAmdProcessesToExit()
     {
         // Poll Until All Known AMD Processes Have Exited or Timeout
-        var deadlineUtc = DateTime.UtcNow.AddSeconds(5);
+        // Re-kill Any That Were Restarted by the Windows Service Controller
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(8);
         while (DateTime.UtcNow < deadlineUtc)
         {
             var anyRunning = false;
@@ -100,17 +101,11 @@ internal static class AmdReset
                 try
                 {
                     var instances = Process.GetProcessesByName(name);
-                    foreach (var p in instances)
-                        try
-                        {
-                            p.Dispose();
-                        }
-                        catch { }
-
                     if (instances.Length > 0)
                     {
                         anyRunning = true;
-                        break;
+                        foreach (var p in instances)
+                            ProcessTools.TryKill(p, waitMs: 500);
                     }
                 }
                 catch { }
@@ -130,7 +125,10 @@ internal static class AmdReset
             // Kill All Instances of the Process by Name
             foreach (var processInstance in Process.GetProcessesByName(processName))
             {
-                LogItem($"{processInstance.ProcessName} (PID {processInstance.Id})");
+                LogItem(
+                    $"{processInstance.ProcessName} (PID {processInstance.Id})",
+                    ConsoleColor.Yellow
+                );
                 ProcessTools.TryKill(processInstance, waitMs: 1500);
             }
         }
@@ -166,7 +164,7 @@ internal static class AmdReset
                 return;
 
             // Kill the AMD-Backed Process
-            LogItem($"{processName} (PID {processInstance.Id})");
+            LogItem($"{processName} (PID {processInstance.Id})", ConsoleColor.Yellow);
             ProcessTools.TryKill(processInstance, waitMs: 1500);
         }
         catch
@@ -203,9 +201,35 @@ internal static class AmdReset
         if (exitCode != 0)
             return;
 
-        // Log and Wait for Service to Reach Stopped State
-        Log($"Stopping Service: {serviceName}", ConsoleColor.DarkYellow);
+        LogItem(serviceName, ConsoleColor.Yellow);
         WaitForServiceStopped(serviceName, timeout: TimeSpan.FromSeconds(6));
+    }
+
+    private static void StartAmdServices()
+    {
+        // Start Known AMD Services by Name
+        foreach (
+            var serviceName in AppConfig.s_amdServiceNameAllowlist.Distinct(
+                StringComparer.OrdinalIgnoreCase
+            )
+        )
+        {
+            TryStartService(serviceName);
+        }
+    }
+
+    private static void TryStartService(string serviceName)
+    {
+        // Issue Start Command via sc.exe
+        var exitCode = CommandRunner.RunExitCode(
+            "sc.exe",
+            $"start \"{serviceName}\"",
+            timeoutMs: 8000
+        );
+        if (exitCode != 0)
+            return;
+
+        LogItem(serviceName, ConsoleColor.Green);
     }
 
     private static void WaitForServiceStopped(string serviceName, TimeSpan timeout)
@@ -217,7 +241,6 @@ internal static class AmdReset
             var state = QueryServiceState(serviceName);
             if (string.Equals(state, "STOPPED", StringComparison.OrdinalIgnoreCase))
             {
-                Log($"Service Stopped: {serviceName}", ConsoleColor.Gray);
                 return;
             }
 
@@ -265,11 +288,12 @@ internal static class AmdReset
 
         try
         {
-            // Launch Adrenalin
+            // Launch Adrenalin Minimized
             var startInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
                 UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Minimized,
             };
 
             Process.Start(startInfo);
@@ -288,11 +312,22 @@ internal static class AmdReset
             if (candidates.Length > 0)
             {
                 foreach (var candidate in candidates)
+                {
                     try
                     {
-                        candidate.Dispose();
+                        // Wait for the Process to Finish Initializing its Message Loop
+                        candidate.WaitForInputIdle(5000);
                     }
                     catch { }
+                    finally
+                    {
+                        try
+                        {
+                            candidate.Dispose();
+                        }
+                        catch { }
+                    }
+                }
 
                 Log("Adrenalin Started", ConsoleColor.Green);
                 return true;
@@ -303,30 +338,6 @@ internal static class AmdReset
 
         Log("Adrenalin Start Timed Out", ConsoleColor.Red);
         return false;
-    }
-
-    private static void CloseAdrenalinWindow()
-    {
-        // Poll Until Adrenalin Window Can be Closed or Timeout
-        var deadlineUtc = DateTime.UtcNow.AddSeconds(15);
-        while (DateTime.UtcNow < deadlineUtc)
-        {
-            var closed = false;
-            foreach (var processInstance in GetAdrenalinCandidateProcesses())
-            {
-                // TryCloseProcess Always Disposes the Process Handle
-                if (TryCloseProcess(processInstance))
-                    closed = true;
-            }
-
-            if (closed)
-            {
-                Log("Adrenalin Closed", ConsoleColor.Green);
-                return;
-            }
-
-            Thread.Sleep(250);
-        }
     }
 
     private static Process[] GetAdrenalinCandidateProcesses()
@@ -352,61 +363,5 @@ internal static class AmdReset
         {
             return [];
         }
-    }
-
-    private static bool TryCloseProcess(Process processInstance)
-    {
-        try
-        {
-            processInstance.Refresh();
-
-            // Try the Main Window Handle First
-            var windowHandle = processInstance.MainWindowHandle;
-
-            // Fall Back to Enumerating All Windows for This Process
-            if (windowHandle == IntPtr.Zero)
-                windowHandle = FindVisibleProcessWindow(processInstance.Id);
-
-            if (windowHandle == IntPtr.Zero)
-                return false;
-
-            // Hide the Window Directly
-            _ = NativeMethods.ShowWindow(windowHandle, NativeMethods.SwHide);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            // Always Dispose the Process Handle
-            try
-            {
-                processInstance.Dispose();
-            }
-            catch { }
-        }
-    }
-
-    private static IntPtr FindVisibleProcessWindow(int processId)
-    {
-        var result = IntPtr.Zero;
-
-        // Enumerate All Top Level Windows to Find a Visible One for This Process
-        NativeMethods.EnumWindows(
-            (hWnd, _) =>
-            {
-                NativeMethods.GetWindowThreadProcessId(hWnd, out var pid);
-                if (pid != (uint)processId || !NativeMethods.IsWindowVisible(hWnd))
-                    return true;
-
-                result = hWnd;
-                return false; // Stop Enumeration
-            },
-            IntPtr.Zero
-        );
-
-        return result;
     }
 }

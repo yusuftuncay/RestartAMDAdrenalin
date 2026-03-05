@@ -55,7 +55,7 @@ internal static partial class Program
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        LogList($"Games Found: {uniqueDisplayNames.Count}", uniqueDisplayNames);
+        LogList($"Games Found: {uniqueDisplayNames.Count}", uniqueDisplayNames, ConsoleColor.Cyan);
 
         // Exit if no Games are Found
         if (gameProcessNames.Count == 0)
@@ -208,8 +208,9 @@ internal static partial class Program
         {
             Log($"Game Detected: {startedDisplayName}", ConsoleColor.Yellow);
 
-            // Wait for Configured Delay (Not Cancellable — Reset Runs to Completion Once Triggered)
-            await Task.Delay(AppConfig.s_gameStartDelay, cancellationToken).ConfigureAwait(false);
+            // Wait for Configured Delay
+            await Task.Delay(AppConfig.s_gameStartDelay, CancellationToken.None)
+                .ConfigureAwait(false);
 
             // Abort if Game Closed During Delay
             if (!IsAnyTrackedGameRunning(gameProcessNames))

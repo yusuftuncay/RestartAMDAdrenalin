@@ -412,22 +412,45 @@ internal static partial class GameScanner
 
     private static IEnumerable<string> DiscoverRiotGameRoots()
     {
-        // Check for Riot Client Installs JSON
-        var installsFilePath = @"C:\ProgramData\Riot Games\RiotClientInstalls.json";
-        if (!File.Exists(installsFilePath))
-        {
-            // Fall Back to Default Riot Root
-            var defaultRoot = @"C:\Riot Games";
-            if (Directory.Exists(defaultRoot))
-            {
-                yield return defaultRoot;
-            }
-
+        // Resolve Riot Games Root
+        var riotGamesRoot = TryFindRiotGamesRoot();
+        if (riotGamesRoot is null)
             yield break;
+
+        // Yield Each Game Sub-Dir, Skip Launcher
+        foreach (var childDirectory in SafeFs.EnumerateDirectories(riotGamesRoot))
+        {
+            if (TextMatchers.ContainsAnyToken(childDirectory, AppConfig.s_pathTokenBlocklist))
+                continue;
+
+            yield return childDirectory;
+        }
+    }
+
+    private static string? TryFindRiotGamesRoot()
+    {
+        // Try JSON First
+        var installsFilePath = @"C:\ProgramData\Riot Games\RiotClientInstalls.json";
+        if (File.Exists(installsFilePath))
+        {
+            var rootFromJson = TryParseRiotGamesRootFromJson(installsFilePath);
+            if (rootFromJson is not null)
+                return rootFromJson;
         }
 
-        // Parse Executable Paths From the JSON
-        var installDirectories = new List<string>();
+        // Fall Back to Known Locations
+        string[] candidatePaths =
+        [
+            @"C:\Riot Games",
+            @"C:\Program Files\Riot Games",
+            @"C:\Program Files (x86)\Riot Games",
+        ];
+
+        return candidatePaths.FirstOrDefault(Directory.Exists);
+    }
+
+    private static string? TryParseRiotGamesRootFromJson(string installsFilePath)
+    {
         try
         {
             using var jsonDocument = JsonDocument.Parse(File.ReadAllText(installsFilePath));
@@ -440,20 +463,19 @@ internal static partial class GameScanner
                 if (string.IsNullOrWhiteSpace(executablePath))
                     continue;
 
-                var directoryPath = Path.GetDirectoryName(executablePath);
-                if (!string.IsNullOrWhiteSpace(directoryPath) && Directory.Exists(directoryPath))
-                {
-                    installDirectories.Add(directoryPath!);
-                }
+                var clientDirectory = Path.GetDirectoryName(executablePath);
+                if (string.IsNullOrWhiteSpace(clientDirectory))
+                    continue;
+
+                // Walk Up One Level to Get the Riot Games Root
+                var riotGamesRoot = Path.GetDirectoryName(clientDirectory);
+                if (!string.IsNullOrWhiteSpace(riotGamesRoot) && Directory.Exists(riotGamesRoot))
+                    return riotGamesRoot;
             }
         }
         catch { }
 
-        // Yield Each Discovered Install Directory
-        foreach (var directoryPath in installDirectories)
-        {
-            yield return directoryPath;
-        }
+        return null;
     }
 
     private static IEnumerable<string> DiscoverRockstarGameRoots()

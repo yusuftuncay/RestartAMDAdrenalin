@@ -14,7 +14,11 @@ internal static class Logger
         Console.ResetColor();
     }
 
-    internal static void LogList(string header, IReadOnlyList<string> items)
+    internal static void LogList(
+        string header,
+        IReadOnlyList<string> items,
+        ConsoleColor itemColor = ConsoleColor.Gray
+    )
     {
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.Write($"[{DateTime.Now:HH:mm:ss}] ");
@@ -23,8 +27,8 @@ internal static class Logger
         foreach (var item in items)
         {
             Console.Write(s_pad);
-            Console.ForegroundColor = ConsoleColor.Gray;
-            Console.WriteLine(item);
+            Console.ForegroundColor = itemColor;
+            Console.WriteLine($"- {item}");
         }
         Console.ResetColor();
     }
@@ -42,7 +46,7 @@ internal static class Logger
     {
         Console.Write(s_pad);
         Console.ForegroundColor = color;
-        Console.WriteLine(item);
+        Console.WriteLine($"- {item}");
         Console.ResetColor();
     }
 }
