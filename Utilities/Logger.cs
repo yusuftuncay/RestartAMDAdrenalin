@@ -35,7 +35,7 @@ internal static class Logger
 
     internal static void LogHeader(string title)
     {
-        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.ForegroundColor = ConsoleColor.White;
         Console.WriteLine(title);
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine(new string('-', title.Length));

@@ -10,43 +10,14 @@ internal static class AppConfig
         @"C:\Program Files\AMD\CNext\CNext\RadeonSettings.exe",
     ];
 
-    // AMD Process Names to Kill by Name
-    internal static readonly string[] s_amdProcessNameAllowlist =
-    [
-        "RadeonSoftware",
-        "RadeonSettings",
-        "RadeonSettingsCore",
-        "AMDRSServ",
-        "AMDRSSrcExt",
-        "Overlay",
-        "AMDRadeonSoftware",
-        "cncmd",
-        "CPUMetricsServer",
-        "atieclxx",
-        "atiesrxx",
-        "amdfendrsr",
-        "amdow",
-        "AmdPpkgSvc",
-    ];
-
-    // AMD Service Names to Stop
-    internal static readonly string[] s_amdServiceNameAllowlist =
-    [
-        "AMDRSServ",
-        "AMDRSSrcExt",
-        "atieclxx",
-        "atiesrxx",
-        "AMD External Events Utility",
-        "amdfendrsr",
-        "AMD Crash Defender Service",
-        "AmdPpkgSvc",
-        "amd3dvcacheSvc",
-    ];
+    // Keywords for Dynamic AMD Service and Process Discovery
+    internal static readonly string[] s_amdKeywords = ["AMD", "Radeon"];
 
     // Path Substrings Identifying AMD Executables
     internal static readonly string[] s_amdExecutablePathMarkers =
     [
         @"\AMD\",
+        @"\Radeon\",
         @"\Advanced Micro Devices\",
         @"\CNext\",
     ];

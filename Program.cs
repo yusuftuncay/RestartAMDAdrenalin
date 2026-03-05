@@ -72,10 +72,11 @@ internal static partial class Program
         Console.CancelKeyPress += (_, cancelEventArgs) =>
         {
             cancelEventArgs.Cancel = true;
-            cancellationTokenSource.Cancel();
+            Log("Shutdown Requested", ConsoleColor.DarkGray);
+            Environment.Exit(0);
         };
 
-        Log("Watching for Games", ConsoleColor.Cyan);
+        Log("Watching for Games", ConsoleColor.Gray);
 
         var previouslyRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -216,14 +217,14 @@ internal static partial class Program
             if (!IsAnyTrackedGameRunning(gameProcessNames))
             {
                 Log("Game Closed Before Reset", ConsoleColor.DarkYellow);
-                Log("Watching for Games", ConsoleColor.Cyan);
+                Log("Watching for Games", ConsoleColor.Gray);
                 return;
             }
 
             // Execute Reset
             AmdReset.ExecuteReset();
             Log("Reset Done", ConsoleColor.Green);
-            Log("Watching for Games", ConsoleColor.Cyan);
+            Log("Watching for Games", ConsoleColor.Gray);
         }
         finally
         {

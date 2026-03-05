@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Diagnostics;
+using System.Management;
 using System.Runtime.Versioning;
 using System.Security.Principal;
 using RestartAMDAdrenalin.Configuration;
@@ -15,18 +16,17 @@ internal static class AmdReset
     internal static void ExecuteReset()
     {
         Log("Stopping AMD Services", ConsoleColor.DarkYellow);
-        StopAmdServices();
+        var runningServiceNames = StopAmdServices();
 
         Log("Stopping AMD Processes", ConsoleColor.DarkYellow);
         StopAmdProcesses();
 
-        Thread.Sleep(1500);
+        Log("Starting AMD Services", ConsoleColor.DarkGreen);
+        StartAmdServices(runningServiceNames);
 
         Log("Starting Adrenalin", ConsoleColor.DarkGreen);
-        StartAdrenalin();
-
-        Log("Starting AMD Services", ConsoleColor.DarkGreen);
-        StartAmdServices();
+        if (StartAdrenalin())
+            CloseAdrenalinWindow();
     }
 
     internal static bool TryRelaunchElevated()
@@ -68,184 +68,204 @@ internal static class AmdReset
 
     private static void StopAmdProcesses()
     {
-        // Kill Known AMD Processes by Name
-        foreach (
-            var allowlistedName in AppConfig.s_amdProcessNameAllowlist.Distinct(
-                StringComparer.OrdinalIgnoreCase
-            )
-        )
-        {
-            TryKillByName(allowlistedName);
-        }
+        // Kill by Name Keyword
+        foreach (var p in ProcessTools.SafeGetAllProcesses())
+            TryKillIfAmdByName(p);
 
-        // Kill any Remaining AMD-Backed Processes
-        foreach (var processInstance in ProcessTools.SafeGetAllProcesses())
-        {
-            TryKillIfAmdBinary(processInstance);
-        }
+        // Kill by Path Marker (Catches AMD Processes Without AMD/Radeon in Name)
+        foreach (var p in ProcessTools.SafeGetAllProcesses())
+            TryKillIfAmdByPath(p);
 
-        // Verify All AMD Processes Have Exited Before Proceeding
         WaitForAmdProcessesToExit();
     }
 
-    private static void WaitForAmdProcessesToExit()
-    {
-        // Poll Until All Known AMD Processes Have Exited or Timeout
-        // Re-kill Any That Were Restarted by the Windows Service Controller
-        var deadlineUtc = DateTime.UtcNow.AddSeconds(8);
-        while (DateTime.UtcNow < deadlineUtc)
-        {
-            var anyRunning = false;
-            foreach (var name in AppConfig.s_amdProcessNameAllowlist)
-            {
-                try
-                {
-                    var instances = Process.GetProcessesByName(name);
-                    if (instances.Length > 0)
-                    {
-                        anyRunning = true;
-                        foreach (var p in instances)
-                            ProcessTools.TryKill(p, waitMs: 500);
-                    }
-                }
-                catch { }
-            }
-
-            if (!anyRunning)
-                return;
-
-            Thread.Sleep(200);
-        }
-    }
-
-    private static void TryKillByName(string processName)
+    private static void TryKillIfAmdByName(Process p)
     {
         try
         {
-            // Kill All Instances of the Process by Name
-            foreach (var processInstance in Process.GetProcessesByName(processName))
-            {
-                LogItem(
-                    $"{processInstance.ProcessName} (PID {processInstance.Id})",
-                    ConsoleColor.Yellow
-                );
-                ProcessTools.TryKill(processInstance, waitMs: 1500);
-            }
+            if (!ContainsAmdKeyword(p.ProcessName))
+                return;
+            LogItem($"{p.ProcessName} (PID {p.Id})", ConsoleColor.Yellow);
+            ProcessTools.TryKill(p, waitMs: 1500);
         }
         catch { }
     }
 
-    private static void TryKillIfAmdBinary(Process processInstance)
+    private static void TryKillIfAmdByPath(Process p)
     {
         try
         {
-            // Skip if Already Handled by the Name Allowlist
-            var processName = processInstance.ProcessName;
-            if (
-                AppConfig.s_amdProcessNameAllowlist.Contains(
-                    processName,
-                    StringComparer.OrdinalIgnoreCase
-                )
-            )
+            if (ContainsAmdKeyword(p.ProcessName))
                 return;
-
-            // Resolve and Validate the Executable Path
-            var executablePath = ProcessTools.TryGetExecutablePath(processInstance);
-            if (string.IsNullOrWhiteSpace(executablePath))
+            var path = ProcessTools.TryGetExecutablePath(p);
+            if (string.IsNullOrWhiteSpace(path))
                 return;
-
-            // Skip if Path Does not Match AMD Markers
-            if (
-                !TextMatchers.ContainsAnyMarker(
-                    executablePath,
-                    AppConfig.s_amdExecutablePathMarkers
-                )
-            )
+            if (!TextMatchers.ContainsAnyMarker(path, AppConfig.s_amdExecutablePathMarkers))
                 return;
-
-            // Kill the AMD-Backed Process
-            LogItem($"{processName} (PID {processInstance.Id})", ConsoleColor.Yellow);
-            ProcessTools.TryKill(processInstance, waitMs: 1500);
+            LogItem($"{p.ProcessName} (PID {p.Id})", ConsoleColor.Yellow);
+            ProcessTools.TryKill(p, waitMs: 1500);
         }
         catch
         {
             try
             {
-                processInstance.Dispose();
+                p.Dispose();
             }
             catch { }
         }
     }
 
-    private static void StopAmdServices()
+    private static void WaitForAmdProcessesToExit()
     {
-        // Stop Known AMD Services by Name
-        foreach (
-            var serviceName in AppConfig.s_amdServiceNameAllowlist.Distinct(
-                StringComparer.OrdinalIgnoreCase
-            )
-        )
+        // Poll Until All AMD Processes Have Exited, Re-Killing Any That Come Back
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadlineUtc)
         {
-            TryStopService(serviceName);
+            var anyRunning = false;
+            foreach (var p in ProcessTools.SafeGetAllProcesses())
+            {
+                try
+                {
+                    var isAmdByName = ContainsAmdKeyword(p.ProcessName);
+                    var isAmdByPath =
+                        !isAmdByName
+                        && TextMatchers.ContainsAnyMarker(
+                            ProcessTools.TryGetExecutablePath(p) ?? string.Empty,
+                            AppConfig.s_amdExecutablePathMarkers
+                        );
+                    if (isAmdByName || isAmdByPath)
+                    {
+                        anyRunning = true;
+                        ProcessTools.TryKill(p, waitMs: 200);
+                    }
+                    else
+                    {
+                        p.Dispose();
+                    }
+                }
+                catch { }
+            }
+            if (!anyRunning)
+                return;
+            Thread.Sleep(200);
         }
     }
 
-    private static void TryStopService(string serviceName)
+    private static List<string> StopAmdServices()
     {
-        // Issue Stop Command via sc.exe
-        var exitCode = CommandRunner.RunExitCode(
-            "sc.exe",
-            $"stop \"{serviceName}\"",
-            timeoutMs: 8000
-        );
-        if (exitCode != 0)
-            return;
+        // Discover Running AMD Services
+        var runningNames = GetRunningAmdServiceNames();
 
-        LogItem(serviceName, ConsoleColor.Yellow);
-        WaitForServiceStopped(serviceName, timeout: TimeSpan.FromSeconds(6));
+        // Issue Stop for Each
+        foreach (var name in runningNames)
+        {
+            CommandRunner.RunExitCode("sc.exe", $"stop \"{name}\"", timeoutMs: 8000);
+            LogItem(name, ConsoleColor.Yellow);
+        }
+
+        // Wait Until All Have Stopped
+        WaitForServicesToStop(runningNames);
+        return runningNames;
     }
 
-    private static void StartAmdServices()
+    private static List<string> GetRunningAmdServiceNames()
     {
-        // Start Known AMD Services by Name
-        foreach (
-            var serviceName in AppConfig.s_amdServiceNameAllowlist.Distinct(
-                StringComparer.OrdinalIgnoreCase
-            )
-        )
+        var result = new List<string>();
+        try
         {
-            TryStartService(serviceName);
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Name, DisplayName, State FROM Win32_Service"
+            );
+            foreach (ManagementObject service in searcher.Get())
+            {
+                try
+                {
+                    var name = service["Name"]?.ToString() ?? string.Empty;
+                    var displayName = service["DisplayName"]?.ToString() ?? string.Empty;
+                    var state = service["State"]?.ToString() ?? string.Empty;
+                    if (
+                        (ContainsAmdKeyword(name) || ContainsAmdKeyword(displayName))
+                        && state.Equals("Running", StringComparison.OrdinalIgnoreCase)
+                    )
+                        result.Add(name);
+                }
+                catch { }
+                finally
+                {
+                    try
+                    {
+                        service.Dispose();
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+        return result;
+    }
+
+    private static void WaitForServicesToStop(List<string> serviceNames)
+    {
+        if (serviceNames.Count == 0)
+            return;
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(15);
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            var anyRunning = serviceNames.Any(name =>
+                !string.Equals(
+                    QueryServiceState(name),
+                    "STOPPED",
+                    StringComparison.OrdinalIgnoreCase
+                )
+            );
+            if (!anyRunning)
+                return;
+            Thread.Sleep(250);
         }
     }
 
-    private static void TryStartService(string serviceName)
+    private static void StartAmdServices(List<string> serviceNames)
     {
-        // Issue Start Command via sc.exe
-        var exitCode = CommandRunner.RunExitCode(
-            "sc.exe",
-            $"start \"{serviceName}\"",
-            timeoutMs: 8000
-        );
-        if (exitCode != 0)
-            return;
-
-        LogItem(serviceName, ConsoleColor.Green);
+        foreach (var name in serviceNames)
+        {
+            var exitCode = CommandRunner.RunExitCode(
+                "sc.exe",
+                $"start \"{name}\"",
+                timeoutMs: 8000
+            );
+            if (exitCode != 0)
+                continue;
+            LogItem(name, ConsoleColor.Green);
+            WaitForServiceRunning(name, TimeSpan.FromSeconds(10));
+        }
     }
 
-    private static void WaitForServiceStopped(string serviceName, TimeSpan timeout)
+    private static void WaitForServiceRunning(string serviceName, TimeSpan timeout)
     {
-        // Poll Until Service is Stopped or Timeout Expires
+        // Poll Until Service is Running or Timeout Expires
         var deadlineUtc = DateTime.UtcNow.Add(timeout);
         while (DateTime.UtcNow < deadlineUtc)
         {
-            var state = QueryServiceState(serviceName);
-            if (string.Equals(state, "STOPPED", StringComparison.OrdinalIgnoreCase))
-            {
+            if (
+                string.Equals(
+                    QueryServiceState(serviceName),
+                    "RUNNING",
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
                 return;
-            }
-
             Thread.Sleep(250);
         }
+    }
+
+    private static bool ContainsAmdKeyword(string text)
+    {
+        foreach (var keyword in AppConfig.s_amdKeywords)
+        {
+            if (text.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static string? QueryServiceState(string serviceName)
@@ -288,12 +308,11 @@ internal static class AmdReset
 
         try
         {
-            // Launch Adrenalin Minimized
+            // Launch Adrenalin
             var startInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
                 UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Minimized,
             };
 
             Process.Start(startInfo);
@@ -338,6 +357,46 @@ internal static class AmdReset
 
         Log("Adrenalin Start Timed Out", ConsoleColor.Red);
         return false;
+    }
+
+    private static void CloseAdrenalinWindow()
+    {
+        // Poll Until Main Window Handle Is Available
+        var deadlineUtc = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadlineUtc)
+        {
+            foreach (var processInstance in GetAdrenalinCandidateProcesses())
+            {
+                try
+                {
+                    processInstance.Refresh();
+                    var mainWindowHandle = processInstance.MainWindowHandle;
+                    if (mainWindowHandle == IntPtr.Zero)
+                        continue;
+
+                    // WM_CLOSE on the Main Window Sends Adrenalin to the Tray
+                    NativeMethods.PostMessage(
+                        mainWindowHandle,
+                        NativeMethods.WindowMessageClose,
+                        IntPtr.Zero,
+                        IntPtr.Zero
+                    );
+                    Log("Adrenalin Closed", ConsoleColor.Green);
+                    return;
+                }
+                catch { }
+                finally
+                {
+                    try
+                    {
+                        processInstance.Dispose();
+                    }
+                    catch { }
+                }
+            }
+
+            Thread.Sleep(250);
+        }
     }
 
     private static Process[] GetAdrenalinCandidateProcesses()
