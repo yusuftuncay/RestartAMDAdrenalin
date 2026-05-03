@@ -5,6 +5,7 @@ public sealed class AtomicInt64
     // Backing Value
     private long _value;
 
+    #region Methods
     // Initialize With the Given Value
     public AtomicInt64(long initialValue)
     {
@@ -22,4 +23,5 @@ public sealed class AtomicInt64
     {
         return Interlocked.Exchange(ref _value, newValue);
     }
+    #endregion
 }

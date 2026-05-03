@@ -1,11 +1,14 @@
 ﻿using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 using RestartAMDAdrenalin.Configuration;
 using RestartAMDAdrenalin.Utilities;
 
 namespace RestartAMDAdrenalin.Game;
 
+[SupportedOSPlatform("windows")]
 internal static partial class GameScanner
 {
     internal static Dictionary<string, string> ScanInstalledGameProcessNames()
@@ -35,7 +38,19 @@ internal static partial class GameScanner
             AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
         }
 
-        return processNameToDisplayName;
+        foreach (var rootDirectory in DiscoverUninstallRegistryGameRoots())
+        {
+            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+        }
+
+        return processNameToDisplayName
+            .Select(kvp => new
+            {
+                kvp.Key,
+                Name = TryGetNiceDisplayName(kvp.Value, kvp.Key, Path.GetDirectoryName(kvp.Value)!),
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+            .ToDictionary(x => x.Key, x => x.Name, StringComparer.OrdinalIgnoreCase);
     }
 
     private static void AddGameExecutablesRecursive(
@@ -59,7 +74,8 @@ internal static partial class GameScanner
             var executablePath in SafeFs.EnumerateFilesRecursivePruned(
                 rootDirectory,
                 "*.exe",
-                AppConfig.s_pathTokenBlocklist
+                AppConfig.s_pathTokenBlocklist,
+                maxDepth: 4
             )
         )
         {
@@ -69,20 +85,63 @@ internal static partial class GameScanner
                 continue;
             }
 
-            var processName = Path.GetFileNameWithoutExtension(executablePath);
+            var rawName = Path.GetFileNameWithoutExtension(executablePath);
+            var processName = NormalizeProcessKey(rawName);
+            static string NormalizeProcessKey(string name)
+            {
+                var cleaned = name.Replace("_", "").Replace("-", "").ToLowerInvariant();
+
+                if (cleaned.StartsWith("acs"))
+                    return "assettocorsa";
+                if (cleaned.Contains("assettocorsa"))
+                    return "assettocorsa";
+
+                return cleaned;
+            }
             if (string.IsNullOrWhiteSpace(processName))
             {
                 continue;
             }
 
-            if (output.ContainsKey(processName))
+            if (output.TryGetValue(processName, out var existingPath))
             {
-                continue;
+                var currentScore = ScoreExe(executablePath);
+                var existingScore = ScoreExe(existingPath);
+
+                static int ScoreExe(string path)
+                {
+                    var name = Path.GetFileNameWithoutExtension(path);
+
+                    var score = 0;
+
+                    if (name.Contains("win64", StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 2;
+                    }
+                    if (name.Contains("shipping", StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 2;
+                    }
+                    if (name.Contains("launcher", StringComparison.OrdinalIgnoreCase))
+                    {
+                        score -= 3;
+                    }
+                    if (name.Contains("helper", StringComparison.OrdinalIgnoreCase))
+                    {
+                        score -= 3;
+                    }
+
+                    return score;
+                }
+
+                if (currentScore <= existingScore)
+                {
+                    continue;
+                }
             }
 
             // Register the Display Name for This Executable
-            var displayName = TryGetNiceDisplayName(executablePath, processName, rootDirectory);
-            output[processName] = displayName;
+            output[processName] = executablePath;
         }
     }
 
@@ -176,6 +235,9 @@ internal static partial class GameScanner
         cleaned = InsertSpacesBetweenWords(cleaned);
         cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
 
+        if (cleaned.Equals("assettocorsa", StringComparison.OrdinalIgnoreCase))
+            return "Assetto Corsa";
+
         return ToTitleCaseInvariant(cleaned);
     }
 
@@ -230,6 +292,7 @@ internal static partial class GameScanner
             var word = words[index];
             if (word.Length <= 3)
             {
+                words[index] = char.ToUpperInvariant(word[0]) + word[1..];
                 continue;
             }
 
@@ -251,29 +314,54 @@ internal static partial class GameScanner
         var executableName = Path.GetFileNameWithoutExtension(executablePath);
         if (string.IsNullOrWhiteSpace(executableName))
             return false;
+        if (executableName.Equals("helper", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (executableName.Contains("helper", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (executableName.Contains("import", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (executableName.Contains("crash", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (executableName.Contains("report", StringComparison.OrdinalIgnoreCase))
+            return false;
 
         // Apply Name Based and Path Based Filters
         if (AppConfig.s_exeNameBlocklist.Contains(executableName, StringComparer.OrdinalIgnoreCase))
             return false;
 
-        foreach (var token in AppConfig.s_exeNameTokenBlocklist)
-        {
-            if (executableName.Contains(token, StringComparison.OrdinalIgnoreCase))
-                return false;
-        }
+        //foreach (var token in AppConfig.s_exeNameTokenBlocklist)
+        //{
+        //    if (executableName.Contains(token, StringComparison.OrdinalIgnoreCase))
+        //        return false;
+        //}
 
-        foreach (var token in AppConfig.s_pathTokenBlocklist)
+        if (!executablePath.Contains("steamapps", StringComparison.OrdinalIgnoreCase))
         {
-            if (executablePath.Contains(token, StringComparison.OrdinalIgnoreCase))
-                return false;
+            foreach (var token in AppConfig.s_pathTokenBlocklist)
+            {
+                if (executablePath.Contains(token, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
         }
 
         // Enforce Minimum File Size
         try
         {
+            // Allow Small Known Unity / Indie Exes
             var fileInfo = new FileInfo(executablePath);
             if (fileInfo.Length < AppConfig.MinGameExeBytes)
-                return false;
+            {
+                var name = Path.GetFileNameWithoutExtension(executablePath);
+
+                if (
+                    !name.Contains("unity", StringComparison.OrdinalIgnoreCase)
+                    && !name.Contains("cuphead", StringComparison.OrdinalIgnoreCase)
+                    && !name.Contains("among", StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    return false;
+                }
+            }
         }
         catch
         {
@@ -300,7 +388,9 @@ internal static partial class GameScanner
         {
             var steamAppsDirectory = Path.Combine(libraryRoot, "steamapps");
             if (!Directory.Exists(steamAppsDirectory))
+            {
                 continue;
+            }
 
             foreach (
                 var manifestPath in SafeFs.EnumerateFiles(steamAppsDirectory, "appmanifest_*.acf")
@@ -308,7 +398,9 @@ internal static partial class GameScanner
             {
                 var installDirectoryName = TryParseSteamAppManifestInstallDir(manifestPath);
                 if (installDirectoryName is null)
+                {
                     continue;
+                }
 
                 var gameRoot = Path.Combine(steamAppsDirectory, "common", installDirectoryName);
                 if (Directory.Exists(gameRoot))
@@ -381,7 +473,9 @@ internal static partial class GameScanner
         {
             var installRoot = TryParseEpicInstallLocation(itemFilePath);
             if (installRoot is null)
+            {
                 continue;
+            }
 
             if (Directory.Exists(installRoot))
             {
@@ -421,7 +515,9 @@ internal static partial class GameScanner
         foreach (var childDirectory in SafeFs.EnumerateDirectories(riotGamesRoot))
         {
             if (TextMatchers.ContainsAnyToken(childDirectory, AppConfig.s_pathTokenBlocklist))
+            {
                 continue;
+            }
 
             yield return childDirectory;
         }
@@ -457,15 +553,21 @@ internal static partial class GameScanner
             foreach (var property in jsonDocument.RootElement.EnumerateObject())
             {
                 if (property.Value.ValueKind != JsonValueKind.String)
+                {
                     continue;
+                }
 
                 var executablePath = property.Value.GetString();
                 if (string.IsNullOrWhiteSpace(executablePath))
+                {
                     continue;
+                }
 
                 var clientDirectory = Path.GetDirectoryName(executablePath);
                 if (string.IsNullOrWhiteSpace(clientDirectory))
+                {
                     continue;
+                }
 
                 // Walk Up One Level to Get the Riot Games Root
                 var riotGamesRoot = Path.GetDirectoryName(clientDirectory);
@@ -490,12 +592,94 @@ internal static partial class GameScanner
         foreach (var baseDirectory in candidateDirectories)
         {
             if (!Directory.Exists(baseDirectory))
+            {
                 continue;
+            }
 
             // Yield Each Game Subdirectory
             foreach (var childDirectory in SafeFs.EnumerateDirectories(baseDirectory))
             {
                 yield return childDirectory;
+            }
+        }
+    }
+
+    private static IEnumerable<string> DiscoverUninstallRegistryGameRoots()
+    {
+        // Both 64-Bit and 32-Bit Uninstall Registry Keys
+        string[] keyPaths =
+        [
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ];
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var keyPath in keyPaths)
+        {
+            using var baseKey = Registry.LocalMachine.OpenSubKey(keyPath);
+            if (baseKey is null)
+            {
+                continue;
+            }
+
+            foreach (var subKeyName in baseKey.GetSubKeyNames())
+            {
+                string installLocation;
+                try
+                {
+                    using var subKey = baseKey.OpenSubKey(subKeyName);
+                    if (subKey is null)
+                    {
+                        continue;
+                    }
+
+                    installLocation = (
+                        (subKey.GetValue("InstallLocation") as string) ?? string.Empty
+                    ).TrimEnd('\\', '/');
+
+                    if (string.IsNullOrWhiteSpace(installLocation))
+                    {
+                        continue;
+                    }
+
+                    var publisher = (subKey.GetValue("Publisher") as string) ?? string.Empty;
+                    if (
+                        TextMatchers.ContainsAnyToken(
+                            publisher,
+                            AppConfig.s_uninstallPublisherBlocklist
+                        )
+                    )
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!Directory.Exists(installLocation))
+                {
+                    continue;
+                }
+
+                if (
+                    TextMatchers.ContainsAnyToken(
+                        installLocation,
+                        AppConfig.s_uninstallPathPrefixBlocklist
+                    )
+                )
+                {
+                    continue;
+                }
+
+                if (!seen.Add(installLocation))
+                {
+                    continue;
+                }
+
+                yield return installLocation;
             }
         }
     }

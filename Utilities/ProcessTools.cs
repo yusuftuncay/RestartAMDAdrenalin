@@ -4,6 +4,7 @@ namespace RestartAMDAdrenalin.Utilities;
 
 internal static class ProcessTools
 {
+    #region Methods
     internal static Process[] SafeGetAllProcesses()
     {
         try
@@ -47,4 +48,5 @@ internal static class ProcessTools
             catch { }
         }
     }
+    #endregion
 }

@@ -9,9 +9,10 @@ namespace RestartAMDAdrenalin;
 [SupportedOSPlatform("windows")]
 internal static partial class Program
 {
-    // Reset State Tracking
+    // Pending Reset Flag
     private static int s_pendingResetFlag;
 
+    #region Entry Point
     private static async Task Main()
     {
         // Exit if not Running on Windows
@@ -76,7 +77,10 @@ internal static partial class Program
             Environment.Exit(0);
         };
 
-        Log("Watching for Games", ConsoleColor.Gray);
+        Log("Watching for Games or Type \"Reset\" to Force Reset", ConsoleColor.Gray);
+
+        // Background Key Listener for Manual Reset
+        _ = WatchForManualTriggerAsync(gameProcessNames, cancellationTokenSource.Token);
 
         var previouslyRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -91,7 +95,9 @@ internal static partial class Program
             foreach (var runningProcessName in currentlyRunning)
             {
                 if (previouslyRunning.Contains(runningProcessName))
+                {
                     continue;
+                }
 
                 newGameStarted = true;
                 startedProcessName = runningProcessName;
@@ -110,11 +116,7 @@ internal static partial class Program
                         ? niceName
                         : (startedProcessName ?? "Game");
 
-                _ = TryTriggerResetAsync(
-                    gameProcessNames,
-                    startedDisplayName,
-                    cancellationTokenSource.Token
-                );
+                _ = TryTriggerResetAsync(gameProcessNames, startedDisplayName, isManual: false);
             }
 
             // Advance the Tracking Snapshot
@@ -133,6 +135,70 @@ internal static partial class Program
         }
 
         Log("Shutdown Requested", ConsoleColor.DarkGray);
+    }
+    #endregion
+
+    #region Methods
+    private static async Task WatchForManualTriggerAsync(
+        HashSet<string> gameProcessNames,
+        CancellationToken cancellationToken
+    )
+    {
+        var inputBuffer = new System.Text.StringBuilder();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                // Accumulate Typed Characters and Trigger on "reset" + Enter
+                while (Console.KeyAvailable)
+                {
+                    var keyInfo = Console.ReadKey(intercept: true);
+
+                    if (keyInfo.Key == ConsoleKey.Enter)
+                    {
+                        var typed = inputBuffer.ToString();
+                        inputBuffer.Clear();
+
+                        // Clear the Typed Input Line
+                        var clearLength = typed.Length;
+                        Console.Write('\r');
+                        Console.Write(new string(' ', clearLength));
+                        Console.Write('\r');
+
+                        if (typed.Equals("reset", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _ = TryTriggerResetAsync(
+                                gameProcessNames,
+                                "Manual Reset",
+                                isManual: true
+                            );
+                        }
+                    }
+                    else if (keyInfo.Key == ConsoleKey.Backspace)
+                    {
+                        if (inputBuffer.Length > 0)
+                        {
+                            inputBuffer.Remove(inputBuffer.Length - 1, 1);
+                            // Erase Last Character on Screen
+                            Console.Write("\b \b");
+                        }
+                    }
+                    else if (!char.IsControl(keyInfo.KeyChar))
+                    {
+                        inputBuffer.Append(keyInfo.KeyChar);
+                        // Echo the Typed Character
+                        Console.Write(keyInfo.KeyChar);
+                    }
+                }
+
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 
     private static HashSet<string> GetRunningGameProcesses(HashSet<string> gameProcessNames)
@@ -198,7 +264,7 @@ internal static partial class Program
     private static async Task TryTriggerResetAsync(
         HashSet<string> gameProcessNames,
         string startedDisplayName,
-        CancellationToken cancellationToken
+        bool isManual
     )
     {
         // Skip if a Reset is Already Pending
@@ -209,26 +275,30 @@ internal static partial class Program
         {
             Log($"Game Detected: {startedDisplayName}", ConsoleColor.Yellow);
 
-            // Wait for Configured Delay
-            await Task.Delay(AppConfig.s_gameStartDelay, CancellationToken.None)
-                .ConfigureAwait(false);
-
-            // Abort if Game Closed During Delay
-            if (!IsAnyTrackedGameRunning(gameProcessNames))
+            if (!isManual)
             {
-                Log("Game Closed Before Reset", ConsoleColor.DarkYellow);
-                Log("Watching for Games", ConsoleColor.Gray);
-                return;
+                // Wait for Configured Delay
+                await Task.Delay(AppConfig.s_gameStartDelay, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                // Abort if Game Closed During Delay
+                if (!IsAnyTrackedGameRunning(gameProcessNames))
+                {
+                    Log("Game Closed Before Reset", ConsoleColor.DarkYellow);
+                    Log("Watching for Games or Type \"Reset\" to Force Reset", ConsoleColor.Gray);
+                    return;
+                }
             }
 
             // Execute Reset
             AmdReset.ExecuteReset();
             Log("Reset Done", ConsoleColor.Green);
-            Log("Watching for Games", ConsoleColor.Gray);
+            Log("Watching for Games or Type \"Reset\" to Force Reset", ConsoleColor.Gray);
         }
         finally
         {
             Interlocked.Exchange(ref s_pendingResetFlag, 0);
         }
     }
+    #endregion
 }

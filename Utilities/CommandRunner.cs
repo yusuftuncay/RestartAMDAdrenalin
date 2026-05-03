@@ -4,6 +4,7 @@ namespace RestartAMDAdrenalin.Utilities;
 
 internal static class CommandRunner
 {
+    #region Methods
     internal static int RunExitCode(string fileName, string arguments, int timeoutMs)
     {
         try
@@ -54,13 +55,13 @@ internal static class CommandRunner
                 return string.Empty;
             }
 
-            // Capture stdout and stderr
+            // Capture Standard Output and Error
             var stdout = processInstance.StandardOutput.ReadToEnd();
             var stderr = processInstance.StandardError.ReadToEnd();
 
             processInstance.WaitForExit(timeoutMs);
 
-            // Prefer stdout, Fall Back to stderr
+            // Prefer Standard Output
             if (!string.IsNullOrWhiteSpace(stdout))
             {
                 return stdout;
@@ -73,4 +74,5 @@ internal static class CommandRunner
             return string.Empty;
         }
     }
+    #endregion
 }

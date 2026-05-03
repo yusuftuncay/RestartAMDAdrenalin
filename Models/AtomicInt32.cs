@@ -5,6 +5,13 @@ public sealed class AtomicInt32
     // Backing Value
     private int _value;
 
+    // Current Value
+    public int Value
+    {
+        get { return Interlocked.CompareExchange(ref _value, 0, 0); }
+    }
+
+    #region Methods
     // Initialize With the Given Value
     public AtomicInt32(int initialValue)
     {
@@ -16,10 +23,5 @@ public sealed class AtomicInt32
     {
         return Interlocked.Exchange(ref _value, newValue);
     }
-
-    // Thread-Safe Read of the Current Value
-    public int Value
-    {
-        get { return Interlocked.CompareExchange(ref _value, 0, 0); }
-    }
+    #endregion
 }

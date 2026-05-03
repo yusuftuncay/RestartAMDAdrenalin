@@ -2,9 +2,10 @@ namespace RestartAMDAdrenalin.Utilities;
 
 internal static class Logger
 {
-    // Pad Width Matches "[HH:mm:ss] " (11 chars) so List Items Align Under the Header Text
+    // List Item Alignment Pad
     private static readonly string s_pad = new(' ', 11);
 
+    #region Methods
     internal static void Log(string message, ConsoleColor color = ConsoleColor.White)
     {
         Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -49,4 +50,5 @@ internal static class Logger
         Console.WriteLine($"- {item}");
         Console.ResetColor();
     }
+    #endregion
 }

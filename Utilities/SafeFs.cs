@@ -2,6 +2,7 @@
 
 internal static class SafeFs
 {
+    #region Methods
     internal static IEnumerable<string> EnumerateFiles(string directoryPath, string pattern)
     {
         try
@@ -33,20 +34,23 @@ internal static class SafeFs
     internal static IEnumerable<string> EnumerateFilesRecursivePruned(
         string rootDirectory,
         string pattern,
-        string[] blockedPathTokens
+        string[] blockedPathTokens,
+        int maxDepth = int.MaxValue
     )
     {
         // Initialize the Traversal Stack With the Root
-        var directoryStack = new Stack<string>();
-        directoryStack.Push(rootDirectory);
+        var directoryStack = new Stack<(string dir, int depth)>();
+        directoryStack.Push((rootDirectory, 0));
 
         while (directoryStack.Count > 0)
         {
-            var currentDirectory = directoryStack.Pop();
+            var (currentDirectory, depth) = directoryStack.Pop();
 
             // Skip Directories With Blocked Path Tokens
             if (TextMatchers.ContainsAnyToken(currentDirectory, blockedPathTokens))
+            {
                 continue;
+            }
 
             IEnumerable<string> filePaths;
             try
@@ -82,11 +86,15 @@ internal static class SafeFs
                 childDirectories = [];
             }
 
+            if (depth >= maxDepth)
+                continue;
+
             // Push Child Directories for Later Traversal
             foreach (var childDirectory in childDirectories)
             {
-                directoryStack.Push(childDirectory);
+                directoryStack.Push((childDirectory, depth + 1));
             }
         }
     }
+    #endregion
 }

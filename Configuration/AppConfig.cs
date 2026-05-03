@@ -29,12 +29,11 @@ internal static class AppConfig
 
     // Delay Before Resetting After Game Start
     internal static readonly TimeSpan s_gameStartDelay = TimeSpan.FromSeconds(2);
-
     #endregion
 
     #region Game Filter
     // Minimum File Size to Qualify as a Game Executable
-    internal const long MinGameExeBytes = 15L * 1024L * 1024L;
+    internal const long MinGameExeBytes = 5L * 1024L * 1024L;
 
     // Exact Executable Names to Skip
     internal static readonly string[] s_exeNameBlocklist =
@@ -111,6 +110,32 @@ internal static class AppConfig
         "crashreporter",
         "launcher",
         "riot client",
+    ];
+
+    // Publisher Substrings to Skip in Windows Uninstall Registry Scan
+    internal static readonly string[] s_uninstallPublisherBlocklist =
+    [
+        "Microsoft",
+        "Google",
+        "Adobe",
+        "Intel",
+        "NVIDIA",
+        "Apple",
+        "Mozilla",
+        "Qualcomm",
+        "Realtek",
+        "Logitech",
+        "Corsair",
+        "Razer",
+    ];
+
+    // Path Prefixes to Skip in Windows Uninstall Registry Scan
+    internal static readonly string[] s_uninstallPathPrefixBlocklist =
+    [
+        @"C:\Windows",
+        @"C:\Program Files\Common Files",
+        @"C:\Program Files (x86)\Common Files",
+        @"C:\ProgramData\Microsoft",
     ];
     #endregion
 }

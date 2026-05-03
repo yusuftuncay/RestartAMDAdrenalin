@@ -13,6 +13,7 @@ namespace RestartAMDAdrenalin.Amd;
 [SupportedOSPlatform("windows")]
 internal static class AmdReset
 {
+    #region Public Methods
     internal static void ExecuteReset()
     {
         Log("Stopping AMD Services", ConsoleColor.DarkYellow);
@@ -26,7 +27,9 @@ internal static class AmdReset
 
         Log("Starting Adrenalin", ConsoleColor.DarkGreen);
         if (StartAdrenalin())
+        {
             CloseAdrenalinWindow();
+        }
     }
 
     internal static bool TryRelaunchElevated()
@@ -65,51 +68,63 @@ internal static class AmdReset
         var windowsPrincipal = new WindowsPrincipal(windowsIdentity);
         return windowsPrincipal.IsInRole(WindowsBuiltInRole.Administrator);
     }
+    #endregion
 
+    #region Private Methods
     private static void StopAmdProcesses()
     {
         // Kill by Name Keyword
-        foreach (var p in ProcessTools.SafeGetAllProcesses())
-            TryKillIfAmdByName(p);
+        foreach (var processInstance in ProcessTools.SafeGetAllProcesses())
+        {
+            TryKillIfAmdByName(processInstance);
+        }
 
         // Kill by Path Marker (Catches AMD Processes Without AMD/Radeon in Name)
-        foreach (var p in ProcessTools.SafeGetAllProcesses())
-            TryKillIfAmdByPath(p);
+        foreach (var processInstance in ProcessTools.SafeGetAllProcesses())
+        {
+            TryKillIfAmdByPath(processInstance);
+        }
 
         WaitForAmdProcessesToExit();
     }
 
-    private static void TryKillIfAmdByName(Process p)
+    private static void TryKillIfAmdByName(Process processInstance)
     {
         try
         {
-            if (!ContainsAmdKeyword(p.ProcessName))
+            if (!ContainsAmdKeyword(processInstance.ProcessName))
                 return;
-            LogItem($"{p.ProcessName} (PID {p.Id})", ConsoleColor.Yellow);
-            ProcessTools.TryKill(p, waitMs: 1500);
+            LogItem(
+                $"{processInstance.ProcessName} (PID {processInstance.Id})",
+                ConsoleColor.Yellow
+            );
+            ProcessTools.TryKill(processInstance, waitMs: 1500);
         }
         catch { }
     }
 
-    private static void TryKillIfAmdByPath(Process p)
+    private static void TryKillIfAmdByPath(Process processInstance)
     {
         try
         {
-            if (ContainsAmdKeyword(p.ProcessName))
+            if (ContainsAmdKeyword(processInstance.ProcessName))
                 return;
-            var path = ProcessTools.TryGetExecutablePath(p);
+            var path = ProcessTools.TryGetExecutablePath(processInstance);
             if (string.IsNullOrWhiteSpace(path))
                 return;
             if (!TextMatchers.ContainsAnyMarker(path, AppConfig.s_amdExecutablePathMarkers))
                 return;
-            LogItem($"{p.ProcessName} (PID {p.Id})", ConsoleColor.Yellow);
-            ProcessTools.TryKill(p, waitMs: 1500);
+            LogItem(
+                $"{processInstance.ProcessName} (PID {processInstance.Id})",
+                ConsoleColor.Yellow
+            );
+            ProcessTools.TryKill(processInstance, waitMs: 1500);
         }
         catch
         {
             try
             {
-                p.Dispose();
+                processInstance.Dispose();
             }
             catch { }
         }
@@ -122,25 +137,25 @@ internal static class AmdReset
         while (DateTime.UtcNow < deadlineUtc)
         {
             var anyRunning = false;
-            foreach (var p in ProcessTools.SafeGetAllProcesses())
+            foreach (var processInstance in ProcessTools.SafeGetAllProcesses())
             {
                 try
                 {
-                    var isAmdByName = ContainsAmdKeyword(p.ProcessName);
+                    var isAmdByName = ContainsAmdKeyword(processInstance.ProcessName);
                     var isAmdByPath =
                         !isAmdByName
                         && TextMatchers.ContainsAnyMarker(
-                            ProcessTools.TryGetExecutablePath(p) ?? string.Empty,
+                            ProcessTools.TryGetExecutablePath(processInstance) ?? string.Empty,
                             AppConfig.s_amdExecutablePathMarkers
                         );
                     if (isAmdByName || isAmdByPath)
                     {
                         anyRunning = true;
-                        ProcessTools.TryKill(p, waitMs: 200);
+                        ProcessTools.TryKill(processInstance, waitMs: 200);
                     }
                     else
                     {
-                        p.Dispose();
+                        processInstance.Dispose();
                     }
                 }
                 catch { }
@@ -176,7 +191,7 @@ internal static class AmdReset
             using var searcher = new ManagementObjectSearcher(
                 "SELECT Name, DisplayName, State FROM Win32_Service"
             );
-            foreach (ManagementObject service in searcher.Get())
+            foreach (var service in searcher.Get().Cast<ManagementObject>())
             {
                 try
                 {
@@ -187,7 +202,9 @@ internal static class AmdReset
                         (ContainsAmdKeyword(name) || ContainsAmdKeyword(displayName))
                         && state.Equals("Running", StringComparison.OrdinalIgnoreCase)
                     )
+                    {
                         result.Add(name);
+                    }
                 }
                 catch { }
                 finally
@@ -234,7 +251,9 @@ internal static class AmdReset
                 timeoutMs: 8000
             );
             if (exitCode != 0)
+            {
                 continue;
+            }
             LogItem(name, ConsoleColor.Green);
             WaitForServiceRunning(name, TimeSpan.FromSeconds(10));
         }
@@ -308,11 +327,12 @@ internal static class AmdReset
 
         try
         {
-            // Launch Adrenalin
+            // Launch Adrenalin Hidden to Avoid Any Focus or Window Flash
             var startInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
                 UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
             };
 
             Process.Start(startInfo);
@@ -372,7 +392,9 @@ internal static class AmdReset
                     processInstance.Refresh();
                     var mainWindowHandle = processInstance.MainWindowHandle;
                     if (mainWindowHandle == IntPtr.Zero)
+                    {
                         continue;
+                    }
 
                     // WM_CLOSE on the Main Window Sends Adrenalin to the Tray
                     NativeMethods.PostMessage(
@@ -423,4 +445,5 @@ internal static class AmdReset
             return [];
         }
     }
+    #endregion
 }
