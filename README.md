@@ -1,14 +1,14 @@
 # About
 
-Automatically resets AMD Adrenalin when a game is launched. Kills all AMD processes and services, then restarts Adrenalin and closes its window, fixing the overlay issue, performance or driver issues without any manual steps
+Automatically restarts AMD Adrenalin when a game launches. Stops AMD services and processes, then relaunches Adrenalin to fix overlay, performance, and driver issues without manual steps.
 
 # How It Works
 
-1. Scans installed games from Steam, Epic, Riot, and Rockstar
-2. Watches for any of those games to start
-3. Waits 2 seconds, then kills all AMD processes and services
-4. Restarts AMD Adrenalin and closes its window
+1. Detects installed games from Steam, Epic, Riot, and Rockstar  
+2. Watches for a game to start  
+3. Waits briefly, then stops AMD processes and services  
+4. Restarts AMD Adrenalin and closes its window  
 
 # Demo
 
-<img width="1103" height="1338" alt="image" src="https://github.com/user-attachments/assets/2f948978-f31e-4c02-80e8-8ecfb4f9ed5c" />
+<img width="1103" height="1145" alt="image" src="https://github.com/user-attachments/assets/d3852076-20aa-459e-ac02-af97a0d5db64" />
