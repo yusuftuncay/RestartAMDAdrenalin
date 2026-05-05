@@ -41,7 +41,7 @@ internal static partial class Program
             return;
         }
 
-        LogHeader("AMD Adrenalin Auto Reset");
+        PrintConsoleHeader();
 
         // Scan Installed Games
         var gameProcessNameToDisplayName = GameScanner.ScanInstalledGameProcessNames();
@@ -139,6 +139,48 @@ internal static partial class Program
     #endregion
 
     #region Methods
+    private static void PrintConsoleHeader()
+    {
+        Console.Title = "Adrenalin Restart";
+
+        // Print ASCII Title
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine(
+            @"              _                      _ _         _____           _             _   "
+        );
+        Console.WriteLine(
+            @"     /\      | |                    | (_)       |  __ \         | |           | |  "
+        );
+        Console.WriteLine(
+            @"    /  \   __| |_ __ ___ _ __   __ _| |_ _ __   | |__) |___  ___| |_ __ _ _ __| |_ "
+        );
+        Console.WriteLine(
+            @"   / /\ \ / _` | '__/ _ \ '_ \ / _` | | | '_ \  |  _  // _ \/ __| __/ _` | '__| __|"
+        );
+        Console.WriteLine(
+            @"  / ____ \ (_| | | |  __/ | | | (_| | | | | | | | | \ \  __/\__ \ || (_| | |  | |_ "
+        );
+        Console.WriteLine(
+            @" /_/    \_\__,_|_|  \___|_| |_|\__,_|_|_|_| |_| |_|  \_\___||___/\__\__,_|_|   \__|"
+        );
+        Console.ResetColor();
+        Console.WriteLine();
+
+        // Print Description
+        Console.ForegroundColor = ConsoleColor.Gray;
+        Console.WriteLine(
+            "Adrenalin Restart Detects Running Games And Restarts AMD Adrenalin Automatically. Supports Steam, Epic, Riot, Rockstar, Roblox And Common Games Folders"
+        );
+        Console.WriteLine();
+
+        // Print GitHub Link
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("Issues And Features");
+        Console.WriteLine("https://github.com/yusuftuncay/AdrenalinRestart");
+        Console.ResetColor();
+        Console.WriteLine();
+    }
+
     private static async Task WatchForManualTriggerAsync(
         HashSet<string> gameProcessNames,
         CancellationToken cancellationToken

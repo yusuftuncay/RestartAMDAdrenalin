@@ -1,9 +1,7 @@
-﻿using System.Diagnostics;
-using System.Runtime.Versioning;
+﻿using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
-using RestartAMDAdrenalin.Configuration;
 using RestartAMDAdrenalin.Utilities;
 
 namespace RestartAMDAdrenalin.Game;
@@ -11,208 +9,532 @@ namespace RestartAMDAdrenalin.Game;
 [SupportedOSPlatform("windows")]
 internal static partial class GameScanner
 {
+    #region Public API
     internal static Dictionary<string, string> ScanInstalledGameProcessNames()
     {
+        // Map: Process Key -> Display Name
         var processNameToDisplayName = new Dictionary<string, string>(
             StringComparer.OrdinalIgnoreCase
         );
 
-        // Discover Games From Each Supported Store
-        foreach (var rootDirectory in DiscoverSteamGameRoots())
+        // Collect From Steam
+        foreach (var (displayName, rootDirectory) in DiscoverSteamGames())
         {
-            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+            TryAddNamedGame(processNameToDisplayName, rootDirectory, displayName);
         }
 
-        foreach (var rootDirectory in DiscoverEpicGameRoots())
+        // Collect From Epic
+        foreach (var (displayName, rootDirectory) in DiscoverEpicGames())
         {
-            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+            TryAddNamedGame(processNameToDisplayName, rootDirectory, displayName);
         }
 
-        foreach (var rootDirectory in DiscoverRiotGameRoots())
+        // Collect From Riot
+        foreach (var (displayName, rootDirectory) in DiscoverRiotGames())
         {
-            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+            TryAddNamedGame(processNameToDisplayName, rootDirectory, displayName);
         }
 
+        // Collect From Rockstar
         foreach (var rootDirectory in DiscoverRockstarGameRoots())
         {
-            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+            TryAddResolvedGame(processNameToDisplayName, rootDirectory);
         }
 
-        foreach (var rootDirectory in DiscoverUninstallRegistryGameRoots())
+        // Collect From Roblox
+        foreach (var (displayName, rootDirectory) in DiscoverRobloxGames())
         {
-            AddGameExecutablesRecursive(processNameToDisplayName, rootDirectory);
+            TryAddNamedGame(processNameToDisplayName, rootDirectory, displayName);
         }
 
-        return processNameToDisplayName
-            .Select(kvp => new
-            {
-                kvp.Key,
-                Name = TryGetNiceDisplayName(kvp.Value, kvp.Key, Path.GetDirectoryName(kvp.Value)!),
-            })
-            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-            .ToDictionary(x => x.Key, x => x.Name, StringComparer.OrdinalIgnoreCase);
+        // Collect From Common Games Directories
+        foreach (var rootDirectory in DiscoverCommonGamesDirectories())
+        {
+            TryAddResolvedGame(processNameToDisplayName, rootDirectory);
+        }
+
+        return processNameToDisplayName;
+    }
+    #endregion
+
+    #region Integration
+    private static void TryAddResolvedGame(Dictionary<string, string> map, string rootDirectory)
+    {
+        var executablePath = ResolveMainExecutable(rootDirectory);
+        if (executablePath == null)
+            return;
+
+        if (!IsLikelyGameExecutable(executablePath))
+            return;
+
+        var processName = NormalizeProcessKey(Path.GetFileNameWithoutExtension(executablePath));
+        if (string.IsNullOrWhiteSpace(processName))
+            return;
+
+        // Build Display Name From Root Folder
+        var displayName = NormalizeDisplayName(new DirectoryInfo(rootDirectory).Name);
+        if (string.IsNullOrWhiteSpace(displayName) || displayName.Length < 2)
+            return;
+
+        map[processName] = displayName;
     }
 
-    private static void AddGameExecutablesRecursive(
-        Dictionary<string, string> output,
-        string rootDirectory
+    private static void TryAddNamedGame(
+        Dictionary<string, string> map,
+        string rootDirectory,
+        string displayName
     )
     {
-        // Validate Root Directory
-        if (string.IsNullOrWhiteSpace(rootDirectory))
-        {
+        var executablePath = ResolveMainExecutable(rootDirectory);
+        if (executablePath == null)
             return;
+
+        if (!IsLikelyGameExecutable(executablePath))
+            return;
+
+        var processName = NormalizeProcessKey(Path.GetFileNameWithoutExtension(executablePath));
+        if (string.IsNullOrWhiteSpace(processName))
+            return;
+
+        var normalizedDisplayName = NormalizeDisplayName(displayName);
+        if (string.IsNullOrWhiteSpace(normalizedDisplayName) || normalizedDisplayName.Length < 2)
+            return;
+
+        map[processName] = normalizedDisplayName;
+    }
+    #endregion
+
+    #region Executable Resolution
+    private static string? ResolveMainExecutable(string rootDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(rootDirectory) || !Directory.Exists(rootDirectory))
+            return null;
+
+        // Scan Root and Known Subdirectory Layouts
+        var probedDirectories = new[]
+        {
+            rootDirectory,
+            Path.Combine(rootDirectory, "Binaries"),
+            Path.Combine(rootDirectory, "Binaries", "Win64"),
+            Path.Combine(rootDirectory, "bin", "win64"),
+            Path.Combine(rootDirectory, "game", "bin", "win64"),
+            Path.Combine(rootDirectory, "live", "ShooterGame", "Binaries", "Win64"),
+        };
+
+        var folderName = new DirectoryInfo(rootDirectory).Name;
+        var bestExe = (string?)null;
+        var bestScore = int.MinValue;
+
+        foreach (var probeDirectory in probedDirectories)
+        {
+            if (!Directory.Exists(probeDirectory))
+                continue;
+
+            foreach (var executablePath in SafeFs.EnumerateFiles(probeDirectory, "*.exe"))
+            {
+                var score = ScoreExecutable(executablePath, folderName);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestExe = executablePath;
+                }
+            }
         }
 
-        if (!Directory.Exists(rootDirectory))
-        {
-            return;
-        }
+        return bestExe;
+    }
 
-        // Enumerate and Filter Executable Files
-        foreach (
-            var executablePath in SafeFs.EnumerateFilesRecursivePruned(
-                rootDirectory,
-                "*.exe",
-                AppConfig.s_pathTokenBlocklist,
-                maxDepth: 4
+    private static int ScoreExecutable(string executablePath, string folderName)
+    {
+        var name = Path.GetFileNameWithoutExtension(executablePath);
+        var score = 0;
+
+        // Penalize Utility Executables
+        if (name.Contains("launcher", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+        if (name.Contains("helper", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+        if (name.Contains("crash", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+        if (name.Contains("report", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+        if (name.Contains("uninstall", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+        if (name.Contains("setup", StringComparison.OrdinalIgnoreCase))
+            score -= 5;
+
+        // Reward Known Game Exe Patterns
+        if (name.Contains("win64", StringComparison.OrdinalIgnoreCase))
+            score += 3;
+        if (name.Contains("shipping", StringComparison.OrdinalIgnoreCase))
+            score += 3;
+
+        // Reward Name Match to Folder
+        if (name.Equals(folderName, StringComparison.OrdinalIgnoreCase))
+            score += 4;
+        else if (folderName.Contains(name, StringComparison.OrdinalIgnoreCase))
+            score += 2;
+
+        return score;
+    }
+
+    private static bool IsLikelyGameExecutable(string executablePath)
+    {
+        var name = Path.GetFileNameWithoutExtension(executablePath);
+
+        // Reject Known Non-Game Executable Patterns
+        if (name.Contains("helper", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("service", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("crash", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("report", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return true;
+    }
+    #endregion
+
+    #region Steam
+    private static IEnumerable<(string DisplayName, string Root)> DiscoverSteamGames()
+    {
+        // Find Steam Installation
+        var steamRoot = FindSteamInstallPath();
+        if (steamRoot is null)
+            yield break;
+
+        // Locate Library Folders VDF Config
+        var libraryFoldersPath = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
+        if (!File.Exists(libraryFoldersPath))
+            yield break;
+
+        foreach (var libraryRoot in ParseSteamLibraryFolders(libraryFoldersPath))
+        {
+            var steamAppsDirectory = Path.Combine(libraryRoot, "steamapps");
+            if (!Directory.Exists(steamAppsDirectory))
+                continue;
+
+            // Read Each App Manifest
+            foreach (
+                var manifestPath in SafeFs.EnumerateFiles(steamAppsDirectory, "appmanifest_*.acf")
             )
-        )
-        {
-            // Skip Files That Fail the Game Exe Heuristic
-            if (!IsLikelyGameExe(executablePath))
             {
-                continue;
-            }
-
-            var rawName = Path.GetFileNameWithoutExtension(executablePath);
-            var processName = NormalizeProcessKey(rawName);
-            static string NormalizeProcessKey(string name)
-            {
-                var cleaned = name.Replace("_", "").Replace("-", "").ToLowerInvariant();
-
-                if (cleaned.StartsWith("acs"))
-                    return "assettocorsa";
-                if (cleaned.Contains("assettocorsa"))
-                    return "assettocorsa";
-
-                return cleaned;
-            }
-            if (string.IsNullOrWhiteSpace(processName))
-            {
-                continue;
-            }
-
-            if (output.TryGetValue(processName, out var existingPath))
-            {
-                var currentScore = ScoreExe(executablePath);
-                var existingScore = ScoreExe(existingPath);
-
-                static int ScoreExe(string path)
-                {
-                    var name = Path.GetFileNameWithoutExtension(path);
-
-                    var score = 0;
-
-                    if (name.Contains("win64", StringComparison.OrdinalIgnoreCase))
-                    {
-                        score += 2;
-                    }
-                    if (name.Contains("shipping", StringComparison.OrdinalIgnoreCase))
-                    {
-                        score += 2;
-                    }
-                    if (name.Contains("launcher", StringComparison.OrdinalIgnoreCase))
-                    {
-                        score -= 3;
-                    }
-                    if (name.Contains("helper", StringComparison.OrdinalIgnoreCase))
-                    {
-                        score -= 3;
-                    }
-
-                    return score;
-                }
-
-                if (currentScore <= existingScore)
-                {
+                var (manifestName, installDir) = TryParseSteamAppManifest(manifestPath);
+                if (installDir is null)
                     continue;
-                }
-            }
 
-            // Register the Display Name for This Executable
-            output[processName] = executablePath;
+                var gameRoot = Path.Combine(steamAppsDirectory, "common", installDir);
+                if (!Directory.Exists(gameRoot))
+                    continue;
+
+                // Use Manifest Name if Available
+                var displayName = !string.IsNullOrWhiteSpace(manifestName)
+                    ? manifestName
+                    : installDir;
+                yield return (displayName, gameRoot);
+            }
         }
     }
 
-    private static string TryGetNiceDisplayName(
-        string executablePath,
-        string processName,
-        string rootDirectory
+    private static string? FindSteamInstallPath()
+    {
+        var candidatePaths = new[] { @"C:\Program Files (x86)\Steam", @"C:\Program Files\Steam" };
+        return candidatePaths.FirstOrDefault(Directory.Exists);
+    }
+
+    private static IEnumerable<string> ParseSteamLibraryFolders(string libraryFoldersPath)
+    {
+        string fileText;
+        try
+        {
+            fileText = File.ReadAllText(libraryFoldersPath);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        // Always Include the Primary Steam Library
+        var steamRoot = Path.GetDirectoryName(Path.GetDirectoryName(libraryFoldersPath))!;
+        yield return steamRoot;
+
+        // Yield Additional Library Paths From VDF
+        foreach (Match match in InstalledPathRegex().Matches(fileText))
+        {
+            var rawPath = match.Groups["p"].Value;
+            var normalizedPath = rawPath.Replace(@"\\", @"\");
+            if (Directory.Exists(normalizedPath))
+                yield return normalizedPath;
+        }
+    }
+
+    private static (string? Name, string? InstallDir) TryParseSteamAppManifest(string manifestPath)
+    {
+        try
+        {
+            var manifestText = File.ReadAllText(manifestPath);
+
+            var installDirMatch = InstalledDirectoryRegex().Match(manifestText);
+            var nameMatch = ManifestNameRegex().Match(manifestText);
+
+            var installDir = installDirMatch.Success ? installDirMatch.Groups["d"].Value : null;
+            var name = nameMatch.Success ? nameMatch.Groups["n"].Value : null;
+
+            return (name, installDir);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+    #endregion
+
+    #region Epic
+    private static IEnumerable<(string DisplayName, string Root)> DiscoverEpicGames()
+    {
+        // Locate Epic Manifests Directory
+        var manifestsDirectory = @"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests";
+        if (!Directory.Exists(manifestsDirectory))
+            yield break;
+
+        foreach (var itemFilePath in SafeFs.EnumerateFiles(manifestsDirectory, "*.item"))
+        {
+            var result = TryParseEpicManifest(itemFilePath);
+            if (result is null)
+                continue;
+
+            var (displayName, installLocation) = result.Value;
+            if (Directory.Exists(installLocation))
+                yield return (displayName, installLocation);
+        }
+    }
+
+    private static (string DisplayName, string InstallLocation)? TryParseEpicManifest(
+        string itemFilePath
     )
     {
-        // Prefer Name From File Version Metadata
-        var fileDisplayName = TryGetDisplayNameFromFileVersion(executablePath);
-        if (!string.IsNullOrWhiteSpace(fileDisplayName))
-        {
-            return NormalizeDisplayName(fileDisplayName!);
-        }
-
-        // Fall Back to Root Directory Name
-        var directoryDisplayName = TryGetDisplayNameFromRootDirectory(rootDirectory);
-        if (!string.IsNullOrWhiteSpace(directoryDisplayName))
-        {
-            return NormalizeDisplayName(directoryDisplayName!);
-        }
-
-        // Default to Process Name
-        return NormalizeDisplayName(processName);
-    }
-
-    private static string? TryGetDisplayNameFromFileVersion(string executablePath)
-    {
         try
         {
-            // Read File Version Metadata
-            var versionInfo = FileVersionInfo.GetVersionInfo(executablePath);
+            using var jsonDocument = JsonDocument.Parse(File.ReadAllText(itemFilePath));
+            var root = jsonDocument.RootElement;
 
-            // Prefer Product Name, Fall Back to File Description
-            if (!string.IsNullOrWhiteSpace(versionInfo.ProductName))
-            {
-                return versionInfo.ProductName;
-            }
-
-            if (!string.IsNullOrWhiteSpace(versionInfo.FileDescription))
-            {
-                return versionInfo.FileDescription;
-            }
-        }
-        catch { }
-
-        return null;
-    }
-
-    private static string? TryGetDisplayNameFromRootDirectory(string rootDirectory)
-    {
-        try
-        {
-            var directoryName = new DirectoryInfo(rootDirectory).Name;
-            if (string.IsNullOrWhiteSpace(directoryName))
-            {
+            if (!root.TryGetProperty("InstallLocation", out var locationProperty))
                 return null;
+            if (locationProperty.ValueKind != JsonValueKind.String)
+                return null;
+
+            var installLocation = locationProperty.GetString();
+            if (string.IsNullOrWhiteSpace(installLocation))
+                return null;
+
+            var displayName = string.Empty;
+            if (
+                root.TryGetProperty("DisplayName", out var nameProperty)
+                && nameProperty.ValueKind == JsonValueKind.String
+            )
+            {
+                displayName = nameProperty.GetString() ?? string.Empty;
             }
 
-            return directoryName;
+            if (string.IsNullOrWhiteSpace(displayName))
+                displayName = new DirectoryInfo(installLocation).Name;
+
+            return (displayName, installLocation);
         }
         catch
         {
             return null;
         }
     }
+    #endregion
 
+    #region Riot
+    private static IEnumerable<(string DisplayName, string Root)> DiscoverRiotGames()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Well-Known Riot Game Directories
+        var knownPaths = new[]
+        {
+            (@"C:\Riot Games\VALORANT", "VALORANT"),
+            (@"C:\Riot Games\League of Legends", "League of Legends"),
+        };
+
+        foreach (var (path, displayName) in knownPaths)
+        {
+            if (Directory.Exists(path) && seen.Add(path))
+                yield return (displayName, path);
+        }
+
+        // Discover Additional Paths From RiotClientInstalls.json
+        var installsFilePath = @"C:\ProgramData\Riot Games\RiotClientInstalls.json";
+        if (!File.Exists(installsFilePath))
+            yield break;
+
+        var additionalRoots = new List<string>();
+
+        try
+        {
+            using var jsonDocument = JsonDocument.Parse(File.ReadAllText(installsFilePath));
+            foreach (var property in jsonDocument.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.String)
+                    continue;
+
+                var rawPath = property.Value.GetString()?.TrimEnd('\\', '/');
+                if (string.IsNullOrWhiteSpace(rawPath))
+                    continue;
+
+                // Walk Up Two Levels to Find Riot Games Root, Then Scan Subdirs
+                var clientDirectory = Path.GetDirectoryName(rawPath);
+                var riotRoot = Path.GetDirectoryName(clientDirectory);
+                if (string.IsNullOrWhiteSpace(riotRoot) || !Directory.Exists(riotRoot))
+                    continue;
+
+                foreach (var gameDirectory in SafeFs.EnumerateDirectories(riotRoot))
+                {
+                    if (seen.Add(gameDirectory))
+                        additionalRoots.Add(gameDirectory);
+                }
+            }
+        }
+        catch { }
+
+        foreach (var root in additionalRoots)
+            yield return (new DirectoryInfo(root).Name, root);
+    }
+    #endregion
+
+    #region Rockstar
+    private static IEnumerable<string> DiscoverRockstarGameRoots()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Try Registry First
+        foreach (var registryRoot in DiscoverRockstarFromRegistry(seen))
+            yield return registryRoot;
+
+        // Fall Back to Known Directories
+        var candidateDirectories = new[]
+        {
+            @"C:\Program Files\Rockstar Games",
+            @"C:\Program Files (x86)\Rockstar Games",
+        };
+
+        foreach (var baseDirectory in candidateDirectories)
+        {
+            if (!Directory.Exists(baseDirectory))
+                continue;
+
+            // Only First-Level Subdirectories
+            foreach (var childDirectory in SafeFs.EnumerateDirectories(baseDirectory))
+            {
+                if (seen.Add(childDirectory))
+                    yield return childDirectory;
+            }
+        }
+    }
+
+    private static IEnumerable<string> DiscoverRockstarFromRegistry(HashSet<string> seen)
+    {
+        var results = new List<string>();
+
+        try
+        {
+            using var baseKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Rockstar Games");
+            if (baseKey is not null)
+            {
+                foreach (var subKeyName in baseKey.GetSubKeyNames())
+                {
+                    try
+                    {
+                        using var subKey = baseKey.OpenSubKey(subKeyName);
+                        if (subKey is null)
+                            continue;
+
+                        var installLocation =
+                            (subKey.GetValue("InstallFolder") as string)
+                            ?? (subKey.GetValue("InstallLocation") as string)
+                            ?? string.Empty;
+
+                        installLocation = installLocation.TrimEnd('\\', '/');
+
+                        if (
+                            !string.IsNullOrWhiteSpace(installLocation)
+                            && Directory.Exists(installLocation)
+                            && seen.Add(installLocation)
+                        )
+                        {
+                            results.Add(installLocation);
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+
+        foreach (var result in results)
+            yield return result;
+    }
+    #endregion
+
+    #region Roblox
+    private static IEnumerable<(string DisplayName, string Root)> DiscoverRobloxGames()
+    {
+        var robloxVersionsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Roblox",
+            "Versions"
+        );
+
+        if (!Directory.Exists(robloxVersionsPath))
+            yield break;
+
+        // Check First-Level Version Directories for RobloxPlayerBeta.exe
+        foreach (var versionDirectory in SafeFs.EnumerateDirectories(robloxVersionsPath))
+        {
+            var playerExePath = Path.Combine(versionDirectory, "RobloxPlayerBeta.exe");
+            if (File.Exists(playerExePath))
+            {
+                yield return ("Roblox", versionDirectory);
+                yield break;
+            }
+        }
+    }
+    #endregion
+
+    #region Common Games Directories
+    private static IEnumerable<string> DiscoverCommonGamesDirectories()
+    {
+        // Scan Only Known Common Game Directories
+        var candidateDirectories = new[] { @"C:\Games", @"D:\Games", @"E:\Games" };
+
+        foreach (var gamesDirectory in candidateDirectories)
+        {
+            if (!Directory.Exists(gamesDirectory))
+                continue;
+
+            // Only First-Level Subdirectories
+            foreach (var childDirectory in SafeFs.EnumerateDirectories(gamesDirectory))
+            {
+                yield return childDirectory;
+            }
+        }
+    }
+    #endregion
+
+    #region Display Name Helpers
     private static string NormalizeDisplayName(string value)
     {
         var cleaned = value.Trim();
+
+        if (cleaned.Length < 2)
+            return string.Empty;
+
+        // Strip Trademark and Registered Symbols
+        cleaned = cleaned.Replace("\u00AE", "").Replace("\u2122", "");
 
         // Normalize Separators to Spaces
         cleaned = cleaned.Replace('_', ' ');
@@ -231,12 +553,8 @@ internal static partial class GameScanner
 
         cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
 
-        // Insert Boundaries and Apply Title Case
-        cleaned = InsertSpacesBetweenWords(cleaned);
-        cleaned = WhitespaceRegex().Replace(cleaned, " ").Trim();
-
-        if (cleaned.Equals("assettocorsa", StringComparison.OrdinalIgnoreCase))
-            return "Assetto Corsa";
+        if (cleaned.Length < 2)
+            return string.Empty;
 
         return ToTitleCaseInvariant(cleaned);
     }
@@ -244,9 +562,7 @@ internal static partial class GameScanner
     private static string InsertSpacesBetweenWords(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-        {
             return value;
-        }
 
         var characters = new List<char>(value.Length + 8);
 
@@ -256,7 +572,7 @@ internal static partial class GameScanner
             var previous = index > 0 ? value[index - 1] : '\0';
             var next = index + 1 < value.Length ? value[index + 1] : '\0';
 
-            // Detect Word Boundary Conditions
+            // Detect Word Boundary
             var isBoundary =
                 index > 0
                 && current != ' '
@@ -268,11 +584,8 @@ internal static partial class GameScanner
                     || (char.IsUpper(previous) && char.IsUpper(current) && char.IsLower(next))
                 );
 
-            // Insert Space at Boundary
             if (isBoundary)
-            {
                 characters.Add(' ');
-            }
 
             characters.Add(current);
         }
@@ -282,409 +595,39 @@ internal static partial class GameScanner
 
     private static string ToTitleCaseInvariant(string value)
     {
-        // Lowercase All Text First
         var lower = value.ToLowerInvariant();
         var words = lower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        // Capitalize Words Longer Than 3 Characters
+        // Capitalize Each Word
         for (var index = 0; index < words.Length; index++)
         {
             var word = words[index];
-            if (word.Length <= 3)
-            {
-                words[index] = char.ToUpperInvariant(word[0]) + word[1..];
-                continue;
-            }
-
             words[index] = char.ToUpperInvariant(word[0]) + word[1..];
         }
 
         return string.Join(' ', words);
     }
+    #endregion
 
-    private static bool IsLikelyGameExe(string executablePath)
+    #region Process Key Helpers
+    internal static string NormalizeProcessKey(string name)
     {
-        // Validate Path and File Existence
-        if (string.IsNullOrWhiteSpace(executablePath))
-            return false;
+        var cleaned = name.Replace("_", "").Replace("-", "").ToLowerInvariant();
 
-        if (!File.Exists(executablePath))
-            return false;
+        if (cleaned.StartsWith("acs") || cleaned.Contains("assettocorsa"))
+            return "assettocorsa";
 
-        var executableName = Path.GetFileNameWithoutExtension(executablePath);
-        if (string.IsNullOrWhiteSpace(executableName))
-            return false;
-        if (executableName.Equals("helper", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (executableName.Contains("helper", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (executableName.Contains("import", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (executableName.Contains("crash", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (executableName.Contains("report", StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (cleaned.Contains("valorant"))
+            return "valorant";
 
-        // Apply Name Based and Path Based Filters
-        if (AppConfig.s_exeNameBlocklist.Contains(executableName, StringComparer.OrdinalIgnoreCase))
-            return false;
-
-        //foreach (var token in AppConfig.s_exeNameTokenBlocklist)
-        //{
-        //    if (executableName.Contains(token, StringComparison.OrdinalIgnoreCase))
-        //        return false;
-        //}
-
-        if (!executablePath.Contains("steamapps", StringComparison.OrdinalIgnoreCase))
-        {
-            foreach (var token in AppConfig.s_pathTokenBlocklist)
-            {
-                if (executablePath.Contains(token, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-        }
-
-        // Enforce Minimum File Size
-        try
-        {
-            // Allow Small Known Unity / Indie Exes
-            var fileInfo = new FileInfo(executablePath);
-            if (fileInfo.Length < AppConfig.MinGameExeBytes)
-            {
-                var name = Path.GetFileNameWithoutExtension(executablePath);
-
-                if (
-                    !name.Contains("unity", StringComparison.OrdinalIgnoreCase)
-                    && !name.Contains("cuphead", StringComparison.OrdinalIgnoreCase)
-                    && !name.Contains("among", StringComparison.OrdinalIgnoreCase)
-                )
-                {
-                    return false;
-                }
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        return true;
+        return cleaned;
     }
-
-    private static IEnumerable<string> DiscoverSteamGameRoots()
-    {
-        // Find Steam Installation
-        var steamRoot = FindSteamInstallPath();
-        if (steamRoot is null)
-            yield break;
-
-        // Locate Library Folders VDF Config
-        var libraryFoldersPath = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
-        if (!File.Exists(libraryFoldersPath))
-            yield break;
-
-        // Enumerate Library Folders and Yield Game Roots
-        foreach (var libraryRoot in ParseSteamLibraryFolders(libraryFoldersPath))
-        {
-            var steamAppsDirectory = Path.Combine(libraryRoot, "steamapps");
-            if (!Directory.Exists(steamAppsDirectory))
-            {
-                continue;
-            }
-
-            foreach (
-                var manifestPath in SafeFs.EnumerateFiles(steamAppsDirectory, "appmanifest_*.acf")
-            )
-            {
-                var installDirectoryName = TryParseSteamAppManifestInstallDir(manifestPath);
-                if (installDirectoryName is null)
-                {
-                    continue;
-                }
-
-                var gameRoot = Path.Combine(steamAppsDirectory, "common", installDirectoryName);
-                if (Directory.Exists(gameRoot))
-                {
-                    yield return gameRoot;
-                }
-            }
-        }
-    }
-
-    private static string? FindSteamInstallPath()
-    {
-        var candidatePaths = new[] { @"C:\Program Files (x86)\Steam", @"C:\Program Files\Steam" };
-
-        return candidatePaths.FirstOrDefault(Directory.Exists);
-    }
-
-    private static IEnumerable<string> ParseSteamLibraryFolders(string libraryFoldersPath)
-    {
-        // Read the VDF File
-        string fileText;
-        try
-        {
-            fileText = File.ReadAllText(libraryFoldersPath);
-        }
-        catch
-        {
-            yield break;
-        }
-
-        // Always Include the Primary Steam Library
-        var steamRoot = Path.GetDirectoryName(Path.GetDirectoryName(libraryFoldersPath))!;
-        yield return steamRoot;
-
-        // Yield Additional Library Paths From the VDF
-        foreach (Match match in InstalledPathRegex().Matches(fileText))
-        {
-            var rawPath = match.Groups["p"].Value;
-            var normalizedPath = rawPath.Replace(@"\\", @"\");
-            if (Directory.Exists(normalizedPath))
-            {
-                yield return normalizedPath;
-            }
-        }
-    }
-
-    private static string? TryParseSteamAppManifestInstallDir(string manifestPath)
-    {
-        try
-        {
-            var manifestText = File.ReadAllText(manifestPath);
-            var match = InstalledDirectoryRegex().Match(manifestText);
-            return match.Success ? match.Groups["d"].Value : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static IEnumerable<string> DiscoverEpicGameRoots()
-    {
-        // Locate Epic Manifests Directory
-        var manifestsDirectory = @"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests";
-        if (!Directory.Exists(manifestsDirectory))
-            yield break;
-
-        // Parse Each .item Manifest for Install Location
-        foreach (var itemFilePath in SafeFs.EnumerateFiles(manifestsDirectory, "*.item"))
-        {
-            var installRoot = TryParseEpicInstallLocation(itemFilePath);
-            if (installRoot is null)
-            {
-                continue;
-            }
-
-            if (Directory.Exists(installRoot))
-            {
-                yield return installRoot;
-            }
-        }
-    }
-
-    private static string? TryParseEpicInstallLocation(string itemFilePath)
-    {
-        try
-        {
-            // Parse the .item JSON File and Extract InstallLocation
-            using var jsonDocument = JsonDocument.Parse(File.ReadAllText(itemFilePath));
-            if (!jsonDocument.RootElement.TryGetProperty("InstallLocation", out var propertyValue))
-                return null;
-
-            if (propertyValue.ValueKind != JsonValueKind.String)
-                return null;
-
-            return propertyValue.GetString();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static IEnumerable<string> DiscoverRiotGameRoots()
-    {
-        // Resolve Riot Games Root
-        var riotGamesRoot = TryFindRiotGamesRoot();
-        if (riotGamesRoot is null)
-            yield break;
-
-        // Yield Each Game Sub-Dir, Skip Launcher
-        foreach (var childDirectory in SafeFs.EnumerateDirectories(riotGamesRoot))
-        {
-            if (TextMatchers.ContainsAnyToken(childDirectory, AppConfig.s_pathTokenBlocklist))
-            {
-                continue;
-            }
-
-            yield return childDirectory;
-        }
-    }
-
-    private static string? TryFindRiotGamesRoot()
-    {
-        // Try JSON First
-        var installsFilePath = @"C:\ProgramData\Riot Games\RiotClientInstalls.json";
-        if (File.Exists(installsFilePath))
-        {
-            var rootFromJson = TryParseRiotGamesRootFromJson(installsFilePath);
-            if (rootFromJson is not null)
-                return rootFromJson;
-        }
-
-        // Fall Back to Known Locations
-        string[] candidatePaths =
-        [
-            @"C:\Riot Games",
-            @"C:\Program Files\Riot Games",
-            @"C:\Program Files (x86)\Riot Games",
-        ];
-
-        return candidatePaths.FirstOrDefault(Directory.Exists);
-    }
-
-    private static string? TryParseRiotGamesRootFromJson(string installsFilePath)
-    {
-        try
-        {
-            using var jsonDocument = JsonDocument.Parse(File.ReadAllText(installsFilePath));
-            foreach (var property in jsonDocument.RootElement.EnumerateObject())
-            {
-                if (property.Value.ValueKind != JsonValueKind.String)
-                {
-                    continue;
-                }
-
-                var executablePath = property.Value.GetString();
-                if (string.IsNullOrWhiteSpace(executablePath))
-                {
-                    continue;
-                }
-
-                var clientDirectory = Path.GetDirectoryName(executablePath);
-                if (string.IsNullOrWhiteSpace(clientDirectory))
-                {
-                    continue;
-                }
-
-                // Walk Up One Level to Get the Riot Games Root
-                var riotGamesRoot = Path.GetDirectoryName(clientDirectory);
-                if (!string.IsNullOrWhiteSpace(riotGamesRoot) && Directory.Exists(riotGamesRoot))
-                    return riotGamesRoot;
-            }
-        }
-        catch { }
-
-        return null;
-    }
-
-    private static IEnumerable<string> DiscoverRockstarGameRoots()
-    {
-        var candidateDirectories = new[]
-        {
-            @"C:\Program Files\Rockstar Games",
-            @"C:\Program Files (x86)\Rockstar Games",
-        };
-
-        // Check Each Candidate Rockstar Installation Directory
-        foreach (var baseDirectory in candidateDirectories)
-        {
-            if (!Directory.Exists(baseDirectory))
-            {
-                continue;
-            }
-
-            // Yield Each Game Subdirectory
-            foreach (var childDirectory in SafeFs.EnumerateDirectories(baseDirectory))
-            {
-                yield return childDirectory;
-            }
-        }
-    }
-
-    private static IEnumerable<string> DiscoverUninstallRegistryGameRoots()
-    {
-        // Both 64-Bit and 32-Bit Uninstall Registry Keys
-        string[] keyPaths =
-        [
-            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-        ];
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var keyPath in keyPaths)
-        {
-            using var baseKey = Registry.LocalMachine.OpenSubKey(keyPath);
-            if (baseKey is null)
-            {
-                continue;
-            }
-
-            foreach (var subKeyName in baseKey.GetSubKeyNames())
-            {
-                string installLocation;
-                try
-                {
-                    using var subKey = baseKey.OpenSubKey(subKeyName);
-                    if (subKey is null)
-                    {
-                        continue;
-                    }
-
-                    installLocation = (
-                        (subKey.GetValue("InstallLocation") as string) ?? string.Empty
-                    ).TrimEnd('\\', '/');
-
-                    if (string.IsNullOrWhiteSpace(installLocation))
-                    {
-                        continue;
-                    }
-
-                    var publisher = (subKey.GetValue("Publisher") as string) ?? string.Empty;
-                    if (
-                        TextMatchers.ContainsAnyToken(
-                            publisher,
-                            AppConfig.s_uninstallPublisherBlocklist
-                        )
-                    )
-                    {
-                        continue;
-                    }
-                }
-                catch
-                {
-                    continue;
-                }
-
-                if (!Directory.Exists(installLocation))
-                {
-                    continue;
-                }
-
-                if (
-                    TextMatchers.ContainsAnyToken(
-                        installLocation,
-                        AppConfig.s_uninstallPathPrefixBlocklist
-                    )
-                )
-                {
-                    continue;
-                }
-
-                if (!seen.Add(installLocation))
-                {
-                    continue;
-                }
-
-                yield return installLocation;
-            }
-        }
-    }
+    #endregion
 
     #region Regexes
+    [GeneratedRegex("\"name\"\\s*\"(?<n>[^\"]+)\"", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex ManifestNameRegex();
+
     [GeneratedRegex("\"installdir\"\\s*\"(?<d>[^\"]+)\"", RegexOptions.IgnoreCase, "en-US")]
     private static partial Regex InstalledDirectoryRegex();
 
