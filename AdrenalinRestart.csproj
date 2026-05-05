@@ -6,10 +6,6 @@
     <Nullable>enable</Nullable>
     <Version>1.4</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PublishTrimmed>True</PublishTrimmed>
-    <PublishAot>True</PublishAot>
-    <SignAssembly>False</SignAssembly>
-    <PackageProjectUrl></PackageProjectUrl>
     <RepositoryUrl>https://github.com/yusuftuncay/AdrenalinRestart</RepositoryUrl>
     <Description>Adrenalin Restart Detects Running Games And Restarts AMD Adrenalin Automatically. Supports Steam Epic Riot Rockstar Roblox And Common Games Folders</Description>
   </PropertyGroup>
