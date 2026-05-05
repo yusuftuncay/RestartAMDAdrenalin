@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics;
 
-namespace RestartAMDAdrenalin.Utilities;
+namespace AdrenalinRestart.Utilities;
 
 internal static class CommandRunner
 {

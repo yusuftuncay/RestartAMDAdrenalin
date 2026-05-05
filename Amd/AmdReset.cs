@@ -3,12 +3,12 @@ using System.Diagnostics;
 using System.Management;
 using System.Runtime.Versioning;
 using System.Security.Principal;
-using RestartAMDAdrenalin.Configuration;
-using RestartAMDAdrenalin.Native;
-using RestartAMDAdrenalin.Utilities;
-using static RestartAMDAdrenalin.Utilities.Logger;
+using AdrenalinRestart.Configuration;
+using AdrenalinRestart.Native;
+using AdrenalinRestart.Utilities;
+using static AdrenalinRestart.Utilities.Logger;
 
-namespace RestartAMDAdrenalin.Amd;
+namespace AdrenalinRestart.Amd;
 
 [SupportedOSPlatform("windows")]
 internal static class AmdReset

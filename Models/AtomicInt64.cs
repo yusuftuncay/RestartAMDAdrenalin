@@ -1,4 +1,4 @@
-﻿namespace RestartAMDAdrenalin.Models;
+﻿namespace AdrenalinRestart.Models;
 
 public sealed class AtomicInt64
 {

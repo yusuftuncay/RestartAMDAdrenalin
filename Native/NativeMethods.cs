@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
-namespace RestartAMDAdrenalin.Native;
+namespace AdrenalinRestart.Native;
 
 [SupportedOSPlatform("windows")]
 internal static partial class NativeMethods

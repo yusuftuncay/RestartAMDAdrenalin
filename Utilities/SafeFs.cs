@@ -1,4 +1,4 @@
-﻿namespace RestartAMDAdrenalin.Utilities;
+﻿namespace AdrenalinRestart.Utilities;
 
 internal static class SafeFs
 {

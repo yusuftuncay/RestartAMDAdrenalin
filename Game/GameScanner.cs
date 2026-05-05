@@ -1,10 +1,10 @@
 ﻿using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AdrenalinRestart.Utilities;
 using Microsoft.Win32;
-using RestartAMDAdrenalin.Utilities;
 
-namespace RestartAMDAdrenalin.Game;
+namespace AdrenalinRestart.Game;
 
 [SupportedOSPlatform("windows")]
 internal static partial class GameScanner

@@ -1,10 +1,10 @@
 ﻿using System.Runtime.Versioning;
-using RestartAMDAdrenalin.Amd;
-using RestartAMDAdrenalin.Configuration;
-using RestartAMDAdrenalin.Game;
-using static RestartAMDAdrenalin.Utilities.Logger;
+using AdrenalinRestart.Amd;
+using AdrenalinRestart.Configuration;
+using AdrenalinRestart.Game;
+using static AdrenalinRestart.Utilities.Logger;
 
-namespace RestartAMDAdrenalin;
+namespace AdrenalinRestart;
 
 [SupportedOSPlatform("windows")]
 internal static partial class Program

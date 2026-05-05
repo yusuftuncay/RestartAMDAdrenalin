@@ -1,4 +1,4 @@
-﻿namespace RestartAMDAdrenalin.Configuration;
+﻿namespace AdrenalinRestart.Configuration;
 
 internal static class AppConfig
 {
