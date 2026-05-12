@@ -11,4 +11,4 @@ Automatically restarts AMD Adrenalin when a game launches. Stops AMD services an
 
 # Demo
 
-<img width="1103" height="1043" alt="image" src="https://github.com/user-attachments/assets/81928f9e-2ec5-4a93-85d7-4ad73bc679d8" />
+<img width="1103" height="1079" alt="image" src="https://github.com/user-attachments/assets/effdbae1-71bd-4dd9-8161-bbdf2f67a0a7" />
