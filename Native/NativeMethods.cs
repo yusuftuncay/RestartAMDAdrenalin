@@ -24,6 +24,12 @@ internal static partial class NativeMethods
 
     // CTRL_CLOSE_EVENT Signal Code
     internal const uint CtrlCloseEvent = 2;
+
+    // System Menu Close Item Identifier
+    internal const uint ScClose = 0xF060;
+
+    // DeleteMenu By Command Flag
+    internal const uint MfByCommand = 0x00000000;
     #endregion
 
     #region Delegates
@@ -68,5 +74,19 @@ internal static partial class NativeMethods
         ConsoleCtrlHandlerDelegate? handlerRoutine,
         [MarshalAs(UnmanagedType.Bool)] bool add
     );
+
+    [LibraryImport("user32.dll")]
+    internal static partial IntPtr GetSystemMenu(
+        IntPtr hWnd,
+        [MarshalAs(UnmanagedType.Bool)] bool bRevert
+    );
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool DeleteMenu(IntPtr hMenu, uint uPosition, uint uFlags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool IsIconic(IntPtr hWnd);
     #endregion
 }

@@ -73,9 +73,20 @@ internal static partial class Program
         s_consoleCtrlHandler = HandleConsoleControl;
         NativeMethods.SetConsoleCtrlHandler(s_consoleCtrlHandler, add: true);
 
+        // Remove Close Button from System Menu So X Hides Instantly
+        if (s_userSettings.MinimizeToTray)
+            RemoveConsoleCloseButton();
+
         // Launch Windows Forms Message Pump for Tray Icon
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
         _ = Task.Run(RunApplicationMessagePump);
+
+        // Expand Buffer So Content Never Wraps Off-Screen While Printing
+        try
+        {
+            Console.BufferHeight = Math.Max(Console.BufferHeight, 9999);
+        }
+        catch { }
 
         PrintConsoleHeader();
         PrintSettingsStatus();
@@ -95,6 +106,17 @@ internal static partial class Program
             .ToList();
 
         LogList($"Games Found: {uniqueDisplayNames.Count}", uniqueDisplayNames, ConsoleColor.Cyan);
+
+        // Snap Window Height to Exactly Fit All Printed Content
+        try
+        {
+            var neededHeight = Console.CursorTop + 1;
+            var maxHeight = Console.LargestWindowHeight - 1;
+            Console.WindowHeight = Math.Min(neededHeight + 2, maxHeight);
+            // Scroll Back to Top After Resizing
+            Console.WindowTop = 0;
+        }
+        catch { }
 
         // Exit if no Games are Found
         if (s_gameProcessNames.Count == 0)
@@ -118,6 +140,9 @@ internal static partial class Program
         // Start Background Key Listener
         _ = WatchForManualTriggerAsync(s_monitoringCancellationTokenSource.Token);
 
+        // Watch for Console Minimize to Intercept and Redirect to Tray
+        _ = WatchForMinimizeAsync(s_monitoringCancellationTokenSource.Token);
+
         // Start Monitoring Loop
         await RunMonitoringLoopAsync(s_monitoringCancellationTokenSource.Token)
             .ConfigureAwait(false);
@@ -133,6 +158,29 @@ internal static partial class Program
             resetCallback: () =>
                 _ = TryTriggerResetAsync(s_gameProcessNames, "Manual Reset", isManual: true),
             restartMonitoringCallback: RestartMonitoring,
+            statusCallback: PrintSettingsStatus,
+            saveCallback: () =>
+            {
+                s_userSettings.Save();
+                Log("Settings Saved", ConsoleColor.Green);
+            },
+            getSettings: () => s_userSettings,
+            setStartup: value =>
+            {
+                s_userSettings.StartupEnabled = value;
+                ApplyStartupRegistration();
+                s_userSettings.Save();
+            },
+            setTray: value =>
+            {
+                s_userSettings.MinimizeToTray = value;
+                s_userSettings.Save();
+            },
+            setStartMinimized: value =>
+            {
+                s_userSettings.StartMinimized = value;
+                s_userSettings.Save();
+            },
             exitCallback: ExitApplication
         );
 
@@ -141,15 +189,49 @@ internal static partial class Program
 
     private static bool HandleConsoleControl(uint controlType)
     {
-        // Intercept Close Button and Minimize to Tray Instead of Exiting
-        if (controlType == NativeMethods.CtrlCloseEvent && s_userSettings.MinimizeToTray)
-        {
-            HideConsoleWindow();
-            s_trayManager?.ShowBalloonTip("Adrenalin Restart", "Still running in the background");
-            return true;
-        }
-
+        // Only Handle Ctrl+C, Not Close (Close Button is Removed)
         return false;
+    }
+
+    private static void RemoveConsoleCloseButton()
+    {
+        var consoleWindowHandle = NativeMethods.GetConsoleWindow();
+        if (consoleWindowHandle == IntPtr.Zero)
+            return;
+
+        var systemMenuHandle = NativeMethods.GetSystemMenu(consoleWindowHandle, bRevert: false);
+        if (systemMenuHandle != IntPtr.Zero)
+            NativeMethods.DeleteMenu(
+                systemMenuHandle,
+                NativeMethods.ScClose,
+                NativeMethods.MfByCommand
+            );
+    }
+
+    private static async Task WatchForMinimizeAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+
+                if (!s_userSettings.MinimizeToTray)
+                    continue;
+
+                var consoleWindowHandle = NativeMethods.GetConsoleWindow();
+                if (consoleWindowHandle == IntPtr.Zero)
+                    continue;
+
+                // Intercept Minimize and Redirect to Tray
+                if (NativeMethods.IsIconic(consoleWindowHandle))
+                    NativeMethods.ShowWindow(consoleWindowHandle, NativeMethods.SwHide);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 
     private static void HideConsoleWindow()
@@ -298,7 +380,7 @@ internal static partial class Program
     private static void PrintSettingsStatus()
     {
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("Status");
+        Console.WriteLine("Current Status");
         Console.WriteLine(
             $"  Startup:        {(s_userSettings.StartupEnabled ? "TRUE" : "FALSE")}"
         );
@@ -316,12 +398,13 @@ internal static partial class Program
     {
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("Commands");
-        PrintCommandLine("  * reset", "Force Restart Adrenalin Now");
-        PrintCommandLine("  * status", "Show Current Settings");
-        PrintCommandLine("  * save", "Save Settings to Disk");
-        PrintCommandLine("  * set startup <true|false>", "Run on Windows Startup");
-        PrintCommandLine("  * set tray <true|false>", "Minimize to Tray on Close");
-        PrintCommandLine("  * set startminimized <true|false>", "Hide Console on Launch");
+        PrintCommandLine("  * Reset", "Force Restart Adrenalin Now");
+        PrintCommandLine("  * Status", "Show Current Settings");
+        PrintCommandLine("  * Save", "Save Settings to Disk");
+        PrintCommandLine("  * SetStartup -Boolean", "Run on Windows Startup");
+        PrintCommandLine("  * SetTray -Boolean", "Minimize to Tray on Close");
+        PrintCommandLine("  * SetStartMinimized -Boolean", "Hide Console on Launch");
+        PrintCommandLine("  * Exit", "Exit the Application");
         Console.ResetColor();
         Console.WriteLine();
     }
@@ -402,53 +485,65 @@ internal static partial class Program
         var parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var command = parts[0];
 
-        if (command.Equals("reset", StringComparison.OrdinalIgnoreCase))
+        if (command.Equals("Reset", StringComparison.OrdinalIgnoreCase))
         {
             _ = TryTriggerResetAsync(s_gameProcessNames, "Manual Reset", isManual: true);
             return;
         }
 
-        if (command.Equals("status", StringComparison.OrdinalIgnoreCase))
+        if (command.Equals("Status", StringComparison.OrdinalIgnoreCase))
         {
             PrintSettingsStatus();
             return;
         }
 
-        if (command.Equals("save", StringComparison.OrdinalIgnoreCase))
+        if (command.Equals("Save", StringComparison.OrdinalIgnoreCase))
         {
             s_userSettings.Save();
             Log("Settings Saved", ConsoleColor.Green);
             return;
         }
 
-        if (command.Equals("set", StringComparison.OrdinalIgnoreCase) && parts.Length >= 3)
+        if (command.Equals("Exit", StringComparison.OrdinalIgnoreCase))
         {
-            var settingName = parts[1];
-            var settingValue = parts[2].Equals("true", StringComparison.OrdinalIgnoreCase);
-
-            if (settingName.Equals("startup", StringComparison.OrdinalIgnoreCase))
-            {
-                s_userSettings.StartupEnabled = settingValue;
-                ApplyStartupRegistration();
-                Log($"Startup Set To {settingValue}", ConsoleColor.Cyan);
-            }
-            else if (settingName.Equals("tray", StringComparison.OrdinalIgnoreCase))
-            {
-                s_userSettings.MinimizeToTray = settingValue;
-                Log($"MinimizeToTray Set To {settingValue}", ConsoleColor.Cyan);
-            }
-            else if (settingName.Equals("startminimized", StringComparison.OrdinalIgnoreCase))
-            {
-                s_userSettings.StartMinimized = settingValue;
-                Log($"StartMinimized Set To {settingValue}", ConsoleColor.Cyan);
-            }
-            else
-            {
-                Log($"Unknown Setting: {settingName}", ConsoleColor.Red);
-            }
-
-            s_userSettings.Save();
+            ExitApplication();
             return;
+        }
+
+        if (parts.Length >= 2)
+        {
+            var flagValue = parts[1].Equals("-True", StringComparison.OrdinalIgnoreCase);
+            var flagProvided =
+                parts[1].Equals("-True", StringComparison.OrdinalIgnoreCase)
+                || parts[1].Equals("-False", StringComparison.OrdinalIgnoreCase);
+
+            if (flagProvided)
+            {
+                if (command.Equals("SetStartup", StringComparison.OrdinalIgnoreCase))
+                {
+                    s_userSettings.StartupEnabled = flagValue;
+                    ApplyStartupRegistration();
+                    Log($"Startup Set To {flagValue}", ConsoleColor.Cyan);
+                    s_userSettings.Save();
+                    return;
+                }
+
+                if (command.Equals("SetTray", StringComparison.OrdinalIgnoreCase))
+                {
+                    s_userSettings.MinimizeToTray = flagValue;
+                    Log($"MinimizeToTray Set To {flagValue}", ConsoleColor.Cyan);
+                    s_userSettings.Save();
+                    return;
+                }
+
+                if (command.Equals("SetStartMinimized", StringComparison.OrdinalIgnoreCase))
+                {
+                    s_userSettings.StartMinimized = flagValue;
+                    Log($"StartMinimized Set To {flagValue}", ConsoleColor.Cyan);
+                    s_userSettings.Save();
+                    return;
+                }
+            }
         }
 
         Log($"Unknown Command: {input}", ConsoleColor.Red);
