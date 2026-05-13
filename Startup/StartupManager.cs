@@ -33,7 +33,9 @@ internal static class StartupManager
         taskDefinition.Settings.StopIfGoingOnBatteries = false;
         taskDefinition.Settings.ExecutionTimeLimit = TimeSpan.Zero;
 
-        taskDefinition.Triggers.Add(new LogonTrigger { UserId = Environment.UserName });
+        taskDefinition.Triggers.Add(
+            new LogonTrigger { UserId = Environment.UserDomainName + "\\" + Environment.UserName }
+        );
         taskDefinition.Actions.Add(new ExecAction($"\"{executablePath}\""));
 
         taskService.RootFolder.RegisterTaskDefinition(ApplicationName, taskDefinition);
